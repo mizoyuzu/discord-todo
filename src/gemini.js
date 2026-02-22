@@ -1,17 +1,6 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 
-let model;
-
-function initGemini() {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    model = genAI.getGenerativeModel({
-        model: 'gemini-flash-latest',
-        generationConfig: {
-            maxOutputTokens: 50,
-            temperature: 0,
-        },
-    });
-}
+const ai = new GoogleGenAI({});
 
 /**
  * Parse natural language date/time string into ISO 8601 format.
@@ -20,7 +9,6 @@ function initGemini() {
  * @returns {Promise<string|null>} ISO 8601 date string or null on failure
  */
 async function parseDateWithGemini(input, timezone = 'Asia/Tokyo') {
-    if (!model) initGemini();
     if (!input || input.trim() === '') return null;
 
     const now = new Date().toLocaleString('ja-JP', { timeZone: timezone });
@@ -30,13 +18,21 @@ async function parseDateWithGemini(input, timezone = 'Asia/Tokyo') {
 この入力を解釈してISO8601形式(YYYY-MM-DDTHH:mm:ss)で出力してください。日時のみ出力し、他は何も出力しないでください。時刻が指定されていない場合は23:59:59としてください。`;
 
     try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Gemini request timeout')), 5000)
+        );
 
-        const result = await model.generateContent(prompt, { signal: controller.signal });
-        clearTimeout(timeout);
+        const generatePromise = ai.models.generateContent({
+            model: 'gemini-flash-latest',
+            contents: prompt,
+            config: {
+                maxOutputTokens: 50,
+                temperature: 0,
+            },
+        });
 
-        const text = result.response.text().trim();
+        const response = await Promise.race([generatePromise, timeoutPromise]);
+        const text = response.text.trim();
 
         // Validate ISO 8601 format
         const match = text.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
@@ -50,4 +46,4 @@ async function parseDateWithGemini(input, timezone = 'Asia/Tokyo') {
     }
 }
 
-module.exports = { parseDateWithGemini, initGemini };
+module.exports = { parseDateWithGemini };
