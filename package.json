@@ -1,0 +1,17 @@
+{
+  "name": "discord-todo-bot",
+  "version": "1.0.0",
+  "description": "Discord ToDo List Bot with Gemini AI date parsing",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy": "node src/commands/deploy.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "better-sqlite3": "^11.7.0",
+    "discord.js": "^14.16.0",
+    "dotenv": "^16.4.0",
+    "node-cron": "^3.0.3"
+  }
+}
