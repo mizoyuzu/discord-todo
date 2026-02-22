@@ -1,6 +1,6 @@
 const { GoogleGenAI } = require('@google/genai');
 
-const ai = new GoogleGenAI({});
+const ai = new GoogleGenAI({ httpOptions: { timeout: 15000 } });
 
 /**
  * Parse natural language date/time string into ISO 8601 format.
@@ -18,11 +18,7 @@ async function parseDateWithGemini(input, timezone = 'Asia/Tokyo') {
 この入力を解釈してISO8601形式(YYYY-MM-DDTHH:mm:ss)で出力してください。日時のみ出力し、他は何も出力しないでください。時刻が指定されていない場合は23:59:59としてください。`;
 
     try {
-        const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Gemini request timeout')), 5000)
-        );
-
-        const generatePromise = ai.models.generateContent({
+        const response = await ai.models.generateContent({
             model: 'gemini-flash-latest',
             contents: prompt,
             config: {
@@ -30,8 +26,6 @@ async function parseDateWithGemini(input, timezone = 'Asia/Tokyo') {
                 temperature: 0,
             },
         });
-
-        const response = await Promise.race([generatePromise, timeoutPromise]);
         const text = response.text.trim();
 
         // Validate ISO 8601 format
