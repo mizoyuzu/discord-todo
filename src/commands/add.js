@@ -1,5 +1,9 @@
-const { SlashCommandBuilder } = require('discord.js');
-const { addTodo, getGuildSettings } = require('../database');
+// === FILE: src/commands/add.js ===
+const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { getGuildSettings, getCategories } = require('../database');
+const { parseDateWithLLM } = require('../llm');
+const { buildConfirmationEmbed } = require('../utils/embeds');
+const { pendingCreations } = require('../utils/state');
 
 const command = new SlashCommandBuilder()
     .setName('add')
@@ -36,12 +40,15 @@ async function execute(interaction) {
     const priority = interaction.options.getInteger('priority') ?? 0;
     const assignee = interaction.options.getUser('assignee');
     const dueInput = interaction.options.getString('due');
+    const guildId = interaction.guild.id;
+    const settings = getGuildSettings(guildId);
+    const timezone = settings.timezone || 'Asia/Tokyo';
+
+    await interaction.deferReply(); // Public reply
 
     let dueDate = null;
     if (dueInput) {
-        await interaction.deferReply({ ephemeral: true });
-        const { parseDateWithGemini } = require('../gemini');
-        dueDate = await parseDateWithGemini(dueInput);
+        dueDate = await parseDateWithLLM(dueInput, timezone);
         if (!dueDate) {
             return interaction.editReply({
                 content: `⚠️ 日時を解析できませんでした: "${dueInput}"\nYYYY-MM-DD形式で再入力するか、別の表現をお試しください。`,
@@ -49,26 +56,33 @@ async function execute(interaction) {
         }
     }
 
-    addTodo(interaction.guild.id, {
+    // Store pending creation
+    const stateKey = `${interaction.user.id}_${guildId}`;
+    const todoData = {
         name,
         priority,
         due_date: dueDate,
         assignee_id: assignee?.id ?? null,
+        category_id: null,
+        category_name: null,
+        category_emoji: null,
+        recurrence: null,
         created_by: interaction.user.id,
-    });
+        timestamp: Date.now(),
+        channelId: interaction.channelId,
+    };
+    pendingCreations.set(stateKey, todoData);
 
-    const parts = [`✅ タスクを追加しました: **${name}**`];
-    if (dueDate) {
-        const d = new Date(dueDate);
-        parts.push(`📅 期限: <t:${Math.floor(d.getTime() / 1000)}:F>`);
-    }
-    if (assignee) parts.push(`👤 担当者: ${assignee}`);
+    // Build confirmation embed
+    const embed = buildConfirmationEmbed(todoData, interaction.user.id);
 
-    const payload = { content: parts.join('\n'), ephemeral: true };
-    if (interaction.deferred) {
-        return interaction.editReply(payload);
-    }
-    return interaction.reply(payload);
+    const buttons = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({ embeds: [embed], components: [buttons] });
 }
 
 module.exports = { data: command, execute };

@@ -1,3 +1,4 @@
+// === FILE: src/handlers/buttonHandler.js ===
 const {
     ModalBuilder, TextInputBuilder, TextInputStyle,
     ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder,
@@ -5,8 +6,10 @@ const {
 } = require('discord.js');
 const { getGuildSettings, getTodos, completeTodo, reopenTodo, deleteTodo, addTodo, getTodoById } = require('../database');
 const { sendTodoList, sendCompletedList } = require('../utils/pagination');
+const { buildCreatedEmbed } = require('../utils/embeds');
+const { pendingCreations } = require('../utils/state');
 
-// State management for multi-step interactions
+// State management for multi-step interactions (add flow from dashboard)
 const userStates = new Map();
 
 function cleanupExpiredStates() {
@@ -24,6 +27,12 @@ async function handleButton(interaction) {
     const guildId = interaction.guild.id;
 
     switch (customId) {
+        // === Create confirmation flow ===
+        case 'confirm_create': return handleConfirmCreate(interaction, guildId);
+        case 'edit_create': return handleEditCreate(interaction, guildId);
+        case 'cancel_create': return handleCancelCreate(interaction);
+
+        // === Dashboard buttons ===
         case 'todo_add': return handleAddButton(interaction, guildId);
         case 'todo_complete': return handleSelectForAction(interaction, guildId, 'complete');
         case 'todo_edit': return handleSelectForAction(interaction, guildId, 'edit');
@@ -40,6 +49,128 @@ async function handleButton(interaction) {
             if (customId.startsWith('cancel_delete_')) return handleCancelDelete(interaction);
     }
 }
+
+// === Create confirmation handlers ===
+
+async function handleConfirmCreate(interaction, guildId) {
+    const stateKey = `${interaction.user.id}_${guildId}`;
+    const data = pendingCreations.get(stateKey);
+    if (!data) {
+        return interaction.update({ content: '⚠️ セッションが期限切れです。もう一度コマンドを実行してください。', embeds: [], components: [] });
+    }
+
+    // Create the todo
+    const result = addTodo(guildId, {
+        name: data.name,
+        priority: data.priority ?? 0,
+        due_date: data.due_date,
+        assignee_id: data.assignee_id,
+        category_id: data.category_id,
+        recurrence: data.recurrence,
+        created_by: data.created_by,
+    });
+
+    pendingCreations.delete(stateKey);
+
+    // Build public announcement embed
+    const todoForEmbed = {
+        id: result.lastInsertRowid,
+        name: data.name,
+        priority: data.priority ?? 0,
+        due_date: data.due_date,
+        assignee_id: data.assignee_id,
+        category_name: data.category_name,
+        category_emoji: data.category_emoji,
+        recurrence: data.recurrence,
+    };
+    const embed = buildCreatedEmbed(todoForEmbed, data.created_by);
+
+    // Update the original message to show the created embed (public)
+    await interaction.update({ embeds: [embed], components: [] });
+
+    // Also announce in the configured todo channel if different from current channel
+    try {
+        const settings = getGuildSettings(guildId);
+        if (settings.todo_channel_id && settings.todo_channel_id !== interaction.channelId) {
+            const todoChannel = await interaction.client.channels.fetch(settings.todo_channel_id).catch(() => null);
+            if (todoChannel) {
+                await todoChannel.send({ embeds: [embed] });
+            }
+        }
+    } catch (e) {
+        console.error('[ConfirmCreate] Failed to announce in todo channel:', e.message);
+    }
+}
+
+async function handleEditCreate(interaction, guildId) {
+    const stateKey = `${interaction.user.id}_${guildId}`;
+    const data = pendingCreations.get(stateKey);
+    if (!data) {
+        return interaction.reply({ content: '⚠️ セッションが期限切れです。', ephemeral: true });
+    }
+
+    const modal = new ModalBuilder()
+        .setCustomId('modal_edit_create')
+        .setTitle('✏️ タスクを編集');
+
+    const nameInput = new TextInputBuilder()
+        .setCustomId('create_name')
+        .setLabel('タスク名')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setValue(data.name)
+        .setMaxLength(100);
+
+    const dueInput = new TextInputBuilder()
+        .setCustomId('create_due')
+        .setLabel('期限（自然言語OK / 空欄でなし）')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setPlaceholder('例: 明日の15時, 3日後, 来週金曜');
+    if (data.due_date) {
+        dueInput.setValue(new Date(data.due_date).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
+    }
+
+    const priorityInput = new TextInputBuilder()
+        .setCustomId('create_priority')
+        .setLabel('重要度（0=低, 1=中, 2=高, 3=緊急）')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setValue(String(data.priority ?? 0))
+        .setMaxLength(1);
+
+    const assigneeInput = new TextInputBuilder()
+        .setCustomId('create_assignee')
+        .setLabel('担当者（ユーザーIDまたは空欄）')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setValue(data.assignee_id || '');
+
+    const recurrenceInput = new TextInputBuilder()
+        .setCustomId('create_recurrence')
+        .setLabel('繰り返し（daily/weekly/monthly/空欄）')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+        .setValue(data.recurrence || '');
+
+    modal.addComponents(
+        new ActionRowBuilder().addComponents(nameInput),
+        new ActionRowBuilder().addComponents(dueInput),
+        new ActionRowBuilder().addComponents(priorityInput),
+        new ActionRowBuilder().addComponents(assigneeInput),
+        new ActionRowBuilder().addComponents(recurrenceInput),
+    );
+
+    await interaction.showModal(modal);
+}
+
+async function handleCancelCreate(interaction) {
+    const stateKey = `${interaction.user.id}_${interaction.guild.id}`;
+    pendingCreations.delete(stateKey);
+    await interaction.update({ content: '❌ キャンセルしました', embeds: [], components: [] });
+}
+
+// === Dashboard handlers ===
 
 async function handleAddButton(interaction, guildId) {
     const settings = getGuildSettings(guildId);

@@ -1,0 +1,15 @@
+[Unit]
+Description=Discord ToDo Bot
+After=network.target
+
+[Service]
+Type=simple
+User=exedev
+WorkingDirectory=/home/exedev/discord-todo
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/exedev/discord-todo/.env
+
+[Install]
+WantedBy=multi-user.target

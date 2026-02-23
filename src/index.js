@@ -1,17 +1,20 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, Events, Partials } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { startReminder } = require('./reminder');
 const { handleButton, userStates } = require('./handlers/buttonHandler');
 const { handleModal } = require('./handlers/modalHandler');
 const { handleSelect } = require('./handlers/selectHandler');
-const { getGuildSettings, addTodo } = require('./database');
+const { getGuildSettings, addTodo, getCategories } = require('./database');
 const { sendTodoList } = require('./utils/pagination');
+const { buildConfirmationEmbed, buildCreatedEmbed } = require('./utils/embeds');
+const { pendingCreations } = require('./utils/state');
+const { handleNaturalLanguageCreate } = require('./commands/create');
 const {
     ActionRowBuilder, ChannelSelectMenuBuilder, ChannelType,
     ModalBuilder, TextInputBuilder, TextInputStyle,
-    UserSelectMenuBuilder,
+    UserSelectMenuBuilder, ButtonBuilder, ButtonStyle,
 } = require('discord.js');
 
 // Ensure data directory exists
@@ -20,10 +23,14 @@ if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
 }
 
+// MessageContent is a privileged intent - enable it in Discord Developer Portal:
+// Bot > Privileged Gateway Intents > Message Content Intent
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
     ],
 });
 
@@ -45,6 +52,50 @@ client.once(Events.ClientReady, (c) => {
     startReminder(client);
 });
 
+// ── @mention handler: natural language task creation ──
+client.on(Events.MessageCreate, async (message) => {
+    // Ignore bots and DMs
+    if (message.author.bot || !message.guild) return;
+
+    // Check if bot is mentioned
+    if (!message.mentions.has(client.user)) return;
+
+    // Strip the bot mention to get the task text
+    let text = message.content
+        .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
+        .trim();
+
+    if (!text) {
+        return message.reply('📝 タスクの内容を書いてください！\n例: `@ToDo Bot プリンターインク確認を来週の月曜に、重要度は高`');
+    }
+
+    try {
+        // Create a fake deferred interaction-like object
+        // We use message.reply to mimic interaction.editReply
+        let replyMsg = await message.reply('🤔 解析中...');
+
+        const fakeInteraction = {
+            user: message.author,
+            guild: message.guild,
+            channelId: message.channelId,
+            replied: true,
+            deferred: true,
+            editReply: async (payload) => {
+                if (typeof payload === 'string') payload = { content: payload };
+                return replyMsg.edit(payload);
+            },
+            followUp: async (payload) => {
+                return message.channel.send(payload);
+            },
+        };
+
+        await handleNaturalLanguageCreate(fakeInteraction, text);
+    } catch (error) {
+        console.error('Mention handler error:', error);
+        message.reply('⚠️ エラーが発生しました。もう一度お試しください。').catch(() => {});
+    }
+});
+
 client.on(Events.InteractionCreate, async (interaction) => {
     try {
         // Slash commands
@@ -56,15 +107,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // Buttons
         if (interaction.isButton()) {
-            // Handle special add-flow buttons
             if (interaction.customId === 'add_confirm') {
                 return handleAddConfirm(interaction);
             }
             if (interaction.customId === 'add_without_date') {
                 return handleAddWithoutDate(interaction);
-            }
-            if (interaction.customId === 'cancel_add') {
-                return interaction.update({ content: '❌ キャンセルしました', components: [], embeds: [] });
             }
             if (interaction.customId === 'add_assignee_btn') {
                 return handleShowAssigneeSelect(interaction);
@@ -88,16 +135,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
         }
 
-        // Select menus (string and channel and user)
-        if (interaction.isStringSelectMenu()) {
-            await handleSelect(interaction);
-            return;
-        }
-        if (interaction.isChannelSelectMenu()) {
-            await handleSelect(interaction);
-            return;
-        }
-        if (interaction.isUserSelectMenu()) {
+        // Select menus
+        if (interaction.isStringSelectMenu() || interaction.isChannelSelectMenu() || interaction.isUserSelectMenu()) {
             await handleSelect(interaction);
             return;
         }
@@ -116,45 +155,83 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 });
 
-// ── Special interaction handlers ──
+// ── Special interaction handlers (dashboard add flow) ──
 
 async function handleAddConfirm(interaction) {
-    const stateKey = `${interaction.user.id}_${interaction.guild.id}`;
+    const guildId = interaction.guild.id;
+    const stateKey = `${interaction.user.id}_${guildId}`;
     const state = userStates.get(stateKey);
     if (!state) {
         return interaction.update({ content: '⚠️ セッションが期限切れです。もう一度 /todo から追加してください。', components: [] });
     }
 
-    addTodo(interaction.guild.id, state);
+    const todoData = {
+        name: state.name,
+        priority: state.priority ?? 0,
+        due_date: state.due_date,
+        assignee_id: state.assignee_id,
+        category_id: state.category_id,
+        category_name: null,
+        category_emoji: null,
+        recurrence: state.recurrence,
+        created_by: state.created_by,
+        timestamp: Date.now(),
+        channelId: interaction.channelId,
+    };
+
+    if (todoData.category_id) {
+        const cats = getCategories(guildId);
+        const cat = cats.find(c => c.id === todoData.category_id);
+        if (cat) {
+            todoData.category_name = cat.name;
+            todoData.category_emoji = cat.emoji;
+        }
+    }
+
+    pendingCreations.set(stateKey, todoData);
     userStates.delete(stateKey);
 
-    const parts = [`✅ タスクを追加しました: **${state.name}**`];
-    if (state.due_date) {
-        const d = new Date(state.due_date);
-        parts.push(`📅 期限: <t:${Math.floor(d.getTime() / 1000)}:F>`);
-    }
-    if (state.assignee_id) parts.push(`👤 担当者: <@${state.assignee_id}>`);
+    const embed = buildConfirmationEmbed(todoData, interaction.user.id);
+    const buttons = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+    );
 
-    await interaction.update({ content: parts.join('\n'), components: [], embeds: [] });
+    await interaction.update({ content: null, embeds: [embed], components: [buttons] });
 }
 
 async function handleAddWithoutDate(interaction) {
-    const stateKey = `${interaction.user.id}_${interaction.guild.id}`;
-    const state = userStates.get(stateKey);
+    const guildId = interaction.guild.id;
+    const stateKey = `${interaction.user.id}_${guildId}`;
 
-    // Find the name from the message content
     const message = interaction.message.content;
     const nameMatch = message.match(/タスク名「(.+?)」/);
     const name = nameMatch ? nameMatch[1] : 'タスク';
 
-    addTodo(interaction.guild.id, {
+    const todoData = {
         name,
         priority: 0,
+        due_date: null,
+        assignee_id: null,
+        category_id: null,
+        category_name: null,
+        category_emoji: null,
+        recurrence: null,
         created_by: interaction.user.id,
-    });
+        timestamp: Date.now(),
+        channelId: interaction.channelId,
+    };
+    pendingCreations.set(stateKey, todoData);
 
-    if (state) userStates.delete(stateKey);
-    await interaction.update({ content: `✅ タスクを追加しました: **${name}**（期限なし）`, components: [] });
+    const embed = buildConfirmationEmbed(todoData, interaction.user.id);
+    const buttons = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.update({ content: null, embeds: [embed], components: [buttons] });
 }
 
 async function handleShowAssigneeSelect(interaction) {
@@ -207,5 +284,4 @@ async function handleShowCategoryModal(interaction) {
     await interaction.showModal(modal);
 }
 
-// Login
 client.login(process.env.DISCORD_TOKEN);

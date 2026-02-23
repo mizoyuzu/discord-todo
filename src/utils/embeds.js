@@ -1,7 +1,10 @@
+// === FILE: src/utils/embeds.js ===
 const { EmbedBuilder } = require('discord.js');
 
 const PRIORITY_LABELS = ['🟢 低', '🟡 中', '🟠 高', '🔴 緊急'];
 const PRIORITY_COLORS = [0x2ecc71, 0xf1c40f, 0xe67e22, 0xe74c3c];
+
+const RECURRENCE_LABELS = { daily: '毎日', weekly: '毎週', monthly: '毎月' };
 
 function buildTodoListEmbed(todos, guildName, page, totalPages, totalCount, filters = {}) {
     const embed = new EmbedBuilder()
@@ -24,7 +27,7 @@ function buildTodoListEmbed(todos, guildName, page, totalPages, totalCount, filt
         embed.setDescription(`🔍 フィルタ: ${filterParts.join(' | ')}`);
     }
 
-    const lines = todos.map((todo, i) => {
+    const lines = todos.map((todo) => {
         const num = `\`#${todo.id}\``;
         const priority = PRIORITY_LABELS[todo.priority] || PRIORITY_LABELS[0];
         let line = `${num} ${priority} **${todo.name}**`;
@@ -32,16 +35,15 @@ function buildTodoListEmbed(todos, guildName, page, totalPages, totalCount, filt
         const details = [];
         if (todo.due_date) {
             const d = new Date(todo.due_date);
-            const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
             const now = new Date();
             const isOverdue = d < now;
-            details.push(isOverdue ? `⚠️ ${dateStr}` : `📅 ${dateStr}`);
+            const ts = Math.floor(d.getTime() / 1000);
+            details.push(isOverdue ? `⚠️ <t:${ts}:R>` : `📅 <t:${ts}:R>`);
         }
         if (todo.assignee_id) details.push(`👤 <@${todo.assignee_id}>`);
         if (todo.category_name) details.push(`${todo.category_emoji || '📁'} ${todo.category_name}`);
         if (todo.recurrence) {
-            const recLabels = { daily: '毎日', weekly: '毎週', monthly: '毎月' };
-            details.push(`🔄 ${recLabels[todo.recurrence] || todo.recurrence}`);
+            details.push(`🔄 ${RECURRENCE_LABELS[todo.recurrence] || todo.recurrence}`);
         }
 
         if (details.length > 0) {
@@ -51,11 +53,11 @@ function buildTodoListEmbed(todos, guildName, page, totalPages, totalCount, filt
         return line;
     });
 
-    embed.addFields({ name: '​', value: lines.join('\n\n') });
+    embed.addFields({ name: '\u200b', value: lines.join('\n\n') });
     return embed;
 }
 
-function buildTodoDetailEmbed(todo, client) {
+function buildTodoDetailEmbed(todo) {
     const embed = new EmbedBuilder()
         .setTitle(`📝 タスク #${todo.id}`)
         .setColor(PRIORITY_COLORS[todo.priority] || 0x5865f2)
@@ -76,8 +78,7 @@ function buildTodoDetailEmbed(todo, client) {
         embed.addFields({ name: 'カテゴリ', value: `${todo.category_emoji || '📁'} ${todo.category_name}`, inline: true });
     }
     if (todo.recurrence) {
-        const recLabels = { daily: '毎日', weekly: '毎週', monthly: '毎月' };
-        embed.addFields({ name: '繰り返し', value: `🔄 ${recLabels[todo.recurrence] || todo.recurrence}`, inline: true });
+        embed.addFields({ name: '繰り返し', value: `🔄 ${RECURRENCE_LABELS[todo.recurrence] || todo.recurrence}`, inline: true });
     }
     embed.addFields({ name: '作成者', value: `<@${todo.created_by}>`, inline: true });
     embed.setFooter({ text: `作成日: ${new Date(todo.created_at).toLocaleDateString('ja-JP')}` });
@@ -85,7 +86,7 @@ function buildTodoDetailEmbed(todo, client) {
     return embed;
 }
 
-function buildReminderEmbed(todayTodos, overdueTodos, client) {
+function buildReminderEmbed(todayTodos, overdueTodos) {
     const embed = new EmbedBuilder()
         .setTitle('⏰ 今日のリマインダー')
         .setColor(0xffa500)
@@ -94,9 +95,9 @@ function buildReminderEmbed(todayTodos, overdueTodos, client) {
     if (overdueTodos.length > 0) {
         const lines = overdueTodos.map(t => {
             const d = new Date(t.due_date);
-            const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+            const ts = Math.floor(d.getTime() / 1000);
             const assignee = t.assignee_id ? ` 👤 <@${t.assignee_id}>` : '';
-            return `⚠️ \`#${t.id}\` **${t.name}** — 期限: ${dateStr}${assignee}`;
+            return `⚠️ \`#${t.id}\` **${t.name}** — 期限: <t:${ts}:R>${assignee}`;
         });
         embed.addFields({ name: `🚨 期限超過 (${overdueTodos.length}件)`, value: lines.join('\n') });
     }
@@ -151,11 +152,109 @@ function buildSettingsEmbed(settings, categories) {
     return embed;
 }
 
+/**
+ * Build a confirmation embed for a todo that's about to be created.
+ * @param {Object} data - Parsed todo data
+ * @param {string} data.name - Task name
+ * @param {string|null} data.due_date - ISO date string or null
+ * @param {string|null} data.assignee_id - Resolved user ID or null
+ * @param {number|null} data.priority - 0-3 or null
+ * @param {string|null} data.recurrence - daily/weekly/monthly or null
+ * @param {string|null} data.category_name - Category name or null
+ * @param {string|null} data.category_emoji - Category emoji or null
+ * @param {string} creatorId - Creator user ID
+ * @returns {EmbedBuilder}
+ */
+function buildConfirmationEmbed(data, creatorId) {
+    const priorityVal = data.priority ?? 0;
+    const embed = new EmbedBuilder()
+        .setTitle('📝 タスク作成の確認')
+        .setColor(PRIORITY_COLORS[priorityVal] || 0x5865f2)
+        .setDescription('以下の内容でタスクを作成します。よろしいですか？')
+        .setTimestamp();
+
+    // Task name
+    embed.addFields({ name: '📌 タスク名', value: data.name, inline: false });
+
+    // Priority
+    embed.addFields({ name: '⚡ 重要度', value: PRIORITY_LABELS[priorityVal] || PRIORITY_LABELS[0], inline: true });
+
+    // Due date
+    if (data.due_date) {
+        const d = new Date(data.due_date);
+        const ts = Math.floor(d.getTime() / 1000);
+        embed.addFields({ name: '📅 期限', value: `<t:${ts}:F> (<t:${ts}:R>)`, inline: true });
+    } else {
+        embed.addFields({ name: '📅 期限', value: 'なし', inline: true });
+    }
+
+    // Assignee
+    if (data.assignee_id) {
+        embed.addFields({ name: '👤 担当者', value: `<@${data.assignee_id}>`, inline: true });
+    }
+
+    // Category
+    if (data.category_name) {
+        embed.addFields({ name: '📁 カテゴリ', value: `${data.category_emoji || '📁'} ${data.category_name}`, inline: true });
+    }
+
+    // Recurrence
+    if (data.recurrence) {
+        embed.addFields({ name: '🔄 繰り返し', value: RECURRENCE_LABELS[data.recurrence] || data.recurrence, inline: true });
+    }
+
+    embed.setFooter({ text: `作成者: ${creatorId}` });
+
+    return embed;
+}
+
+/**
+ * Build a public announcement embed for a newly created todo.
+ * @param {Object} todo - The created todo (from DB)
+ * @param {string} creatorId - Creator user ID
+ * @returns {EmbedBuilder}
+ */
+function buildCreatedEmbed(todo, creatorId) {
+    const priorityVal = todo.priority ?? 0;
+    const embed = new EmbedBuilder()
+        .setTitle('✅ 新しいタスクが作成されました')
+        .setColor(PRIORITY_COLORS[priorityVal] || 0x5865f2)
+        .setTimestamp();
+
+    embed.addFields({ name: '📌 タスク名', value: todo.name, inline: false });
+    embed.addFields({ name: '⚡ 重要度', value: PRIORITY_LABELS[priorityVal] || PRIORITY_LABELS[0], inline: true });
+
+    if (todo.due_date) {
+        const d = new Date(todo.due_date);
+        const ts = Math.floor(d.getTime() / 1000);
+        embed.addFields({ name: '📅 期限', value: `<t:${ts}:F> (<t:${ts}:R>)`, inline: true });
+    }
+
+    if (todo.assignee_id) {
+        embed.addFields({ name: '👤 担当者', value: `<@${todo.assignee_id}>`, inline: true });
+    }
+
+    if (todo.category_name) {
+        embed.addFields({ name: '📁 カテゴリ', value: `${todo.category_emoji || '📁'} ${todo.category_name}`, inline: true });
+    }
+
+    if (todo.recurrence) {
+        embed.addFields({ name: '🔄 繰り返し', value: RECURRENCE_LABELS[todo.recurrence] || todo.recurrence, inline: true });
+    }
+
+    embed.addFields({ name: '👤 作成者', value: `<@${creatorId}>`, inline: true });
+
+    return embed;
+}
+
 module.exports = {
     PRIORITY_LABELS,
     PRIORITY_COLORS,
+    RECURRENCE_LABELS,
     buildTodoListEmbed,
     buildTodoDetailEmbed,
     buildReminderEmbed,
     buildSettingsEmbed,
+    buildConfirmationEmbed,
+    buildCreatedEmbed,
 };
