@@ -22,11 +22,11 @@ function buildSettingsComponents(settings, categories) {
 
     // Field toggle select menu
     const allFields = [
-        { label: '重要度', value: 'priority', emoji: '⚡' },
-        { label: '期限', value: 'due_date', emoji: '📅' },
-        { label: '担当者', value: 'assignee', emoji: '👤' },
-        { label: 'カテゴリ', value: 'category', emoji: '📁' },
-        { label: '繰り返し', value: 'recurrence', emoji: '🔄' },
+        { label: '重要度', value: 'priority' },
+        { label: '期限', value: 'due_date' },
+        { label: '担当者', value: 'assignee' },
+        { label: 'カテゴリ', value: 'category' },
+        { label: '繰り返し', value: 'recurrence' },
     ];
 
     const fieldSelect = new ActionRowBuilder().addComponents(
@@ -44,9 +44,9 @@ function buildSettingsComponents(settings, categories) {
 
     // Channel settings buttons
     const channelRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('settings_reminder_ch').setLabel('リマインダーch設定').setEmoji('⏰').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('settings_todo_ch').setLabel('ToDoチャンネル設定').setEmoji('📋').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('settings_add_category').setLabel('カテゴリ追加').setEmoji('➕').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('settings_reminder_ch').setLabel('リマインダーch設定').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('settings_todo_ch').setLabel('ToDoチャンネル設定').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('settings_add_category').setLabel('カテゴリ追加').setStyle(ButtonStyle.Success),
     );
     rows.push(channelRow);
 
@@ -55,12 +55,11 @@ function buildSettingsComponents(settings, categories) {
         const catOptions = categories.map(c => ({
             label: c.name,
             value: `delcat_${c.id}`,
-            emoji: c.emoji || '📁',
         }));
         const catDelete = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId('settings_delete_category')
-                .setPlaceholder('🗑️ カテゴリを削除')
+                .setPlaceholder('カテゴリを削除')
                 .addOptions(catOptions.slice(0, 25))
         );
         rows.push(catDelete);
