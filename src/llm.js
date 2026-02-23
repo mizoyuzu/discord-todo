@@ -162,11 +162,12 @@ async function parseDateWithLLM(input) {
     }
 }
 
-async function parseNaturalLanguageTodo(input, guildMembers, categories) {
+async function parseNaturalLanguageTodo(input, guildMembers, categories, guildRoles) {
     const fallback = {
         name: input,
         due_date: null,
         assignee_id: null,
+        assignee_type: 'user',
         priority: null,
         recurrence: null,
         category_id: null,
@@ -181,6 +182,9 @@ async function parseNaturalLanguageTodo(input, guildMembers, categories) {
         const memberList = (guildMembers || []).map(m =>
             `- ID: "${m.id}", Display: "${m.displayName}", Username: "${m.username}"`
         ).join('\n');
+        const roleList = (guildRoles || []).map(r =>
+            `- ID: "${r.id}", Name: "${r.name}"`
+        ).join('\n');
         const categoryList = (categories || []).map(c =>
             `- ID: ${c.id}, Name: "${c.name}"`
         ).join('\n');
@@ -193,12 +197,16 @@ Current: ${currentTime} (${tz}, ${dow})
 Members:
 ${memberList || '(none)'}
 
+Roles:
+${roleList || '(none)'}
+
 Categories:
 ${categoryList || '(none)'}
 
 Return ONLY a JSON object:
-{"name":"task name only","due_date":"YYYY-MM-DDTHH:mm:ss or null","assignee_id":"member ID or null","priority":0-3 or null,"recurrence":"daily|weekly|monthly or null","category_id":number or null,"reminder_at":"YYYY-MM-DDTHH:mm:ss or null"}
+{"name":"task name only","due_date":"YYYY-MM-DDTHH:mm:ss or null","assignee_id":"member or role ID or null","assignee_type":"user or role","priority":0-3 or null,"recurrence":"daily|weekly|monthly or null","category_id":number or null,"reminder_at":"YYYY-MM-DDTHH:mm:ss or null"}
 
+assignee: If user specifies a person name, match to Members and set assignee_type="user". If user specifies a role name, match to Roles and set assignee_type="role". Default assignee_type="user".
 Priority: 緊急/至急=3, 重要/高=2, 中=1, 低=0. Time default=23:59:59.
 reminder_at: when to send a reminder notification. If user says "リマインド" or "通知" with a time, extract it. Otherwise null.
 Output ONLY JSON.`;
@@ -215,6 +223,7 @@ Output ONLY JSON.`;
             name: typeof parsed.name === 'string' && parsed.name ? parsed.name : input,
             due_date: typeof parsed.due_date === 'string' ? parsed.due_date : null,
             assignee_id: typeof parsed.assignee_id === 'string' ? parsed.assignee_id : null,
+            assignee_type: parsed.assignee_type === 'role' ? 'role' : 'user',
             priority: typeof parsed.priority === 'number' && parsed.priority >= 0 && parsed.priority <= 3 ? parsed.priority : null,
             recurrence: ['daily', 'weekly', 'monthly'].includes(parsed.recurrence) ? parsed.recurrence : null,
             category_id: typeof parsed.category_id === 'number' ? parsed.category_id : null,

@@ -37,6 +37,7 @@ async function execute(interaction) {
                     priority: todo.priority,
                     due_date: nextDue,
                     assignee_id: todo.assignee_id,
+                    assignee_type: todo.assignee_type || 'user',
                     category_id: todo.category_id,
                     recurrence: todo.recurrence,
                     created_by: todo.created_by,

@@ -51,6 +51,7 @@ async function handleAddTodoModal(interaction) {
         priority: 0,
         due_date: dueDate,
         assignee_id: null,
+        assignee_type: 'user',
         category_id: null,
         category_name: null,
         category_emoji: null,
@@ -146,7 +147,8 @@ function buildAdditionalFieldComponents(settings, guildId) {
 
         if (settings.enabled_fields.includes('assignee')) {
             confirmRow.addComponents(
-                new ButtonBuilder().setCustomId('add_assignee_btn').setLabel('担当者を設定').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId('add_assignee_btn').setLabel('ユーザー割当').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId('add_role_btn').setLabel('ロール割当').setStyle(ButtonStyle.Primary),
             );
         }
 
@@ -190,13 +192,22 @@ async function handleEditCreateModal(interaction) {
     } catch { /* */ }
 
     let newAssignee = data.assignee_id;
+    let newAssigneeType = data.assignee_type || 'user';
     try {
         const aInput = interaction.fields.getTextInputValue('create_assignee');
         if (aInput && aInput.trim()) {
-            const idMatch = aInput.match(/(\d{17,20})/);
-            newAssignee = idMatch ? idMatch[1] : null;
+            const typed = aInput.match(/^(user|role):(\d{17,20})$/);
+            if (typed) {
+                newAssigneeType = typed[1];
+                newAssignee = typed[2];
+            } else {
+                const idMatch = aInput.match(/(\d{17,20})/);
+                newAssignee = idMatch ? idMatch[1] : null;
+                newAssigneeType = 'user';
+            }
         } else {
             newAssignee = null;
+            newAssigneeType = 'user';
         }
     } catch { /* */ }
 
@@ -216,6 +227,7 @@ async function handleEditCreateModal(interaction) {
     data.priority = newPriority;
     data.assignee_id = newAssignee;
     data.reminder_at = newReminder;
+    data.assignee_type = newAssigneeType;
     data.timestamp = Date.now();
 
     // Handle due_date

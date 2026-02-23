@@ -80,6 +80,7 @@ async function handleQuickDone(interaction, guildId) {
                 priority: todo.priority,
                 due_date: nextDue,
                 assignee_id: todo.assignee_id,
+                assignee_type: todo.assignee_type || 'user',
                 category_id: todo.category_id,
                 recurrence: todo.recurrence,
                 created_by: todo.created_by,
@@ -109,6 +110,7 @@ async function handleConfirmCreate(interaction, guildId) {
         priority: data.priority ?? 0,
         due_date: data.due_date,
         assignee_id: data.assignee_id,
+        assignee_type: data.assignee_type || 'user',
         category_id: data.category_id,
         recurrence: data.recurrence,
         created_by: data.created_by,
@@ -125,6 +127,7 @@ async function handleConfirmCreate(interaction, guildId) {
         priority: data.priority ?? 0,
         due_date: data.due_date,
         assignee_id: data.assignee_id,
+        assignee_type: data.assignee_type || 'user',
         category_name: data.category_name,
         category_emoji: data.category_emoji,
         recurrence: data.recurrence,
@@ -195,10 +198,10 @@ async function handleEditCreate(interaction, guildId) {
 
     const assigneeInput = new TextInputBuilder()
         .setCustomId('create_assignee')
-        .setLabel('担当者 (ユーザーID)')
+        .setLabel('割り当て先 (ID) ※ user:ID または role:ID')
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setValue(data.assignee_id || '');
+        .setValue(data.assignee_id ? `${data.assignee_type || 'user'}:${data.assignee_id}` : '');
 
     const reminderInput = new TextInputBuilder()
         .setCustomId('create_reminder')

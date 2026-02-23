@@ -5,7 +5,7 @@ const {
     getPendingReminders, markReminderSent,
 } = require('./database');
 const { buildRecapEmbed, buildReminderNotificationEmbed } = require('./utils/embeds');
-const { todayJST, nowJST } = require('./utils/timezone');
+const { todayJST, nowJST, formatMention } = require('./utils/timezone');
 
 /**
  * Build action components for a list of tasks.
@@ -62,7 +62,7 @@ function startReminder(client) {
                     const components = buildTaskActionComponents(allTodos);
 
                     // Build mention string for assignees
-                    const mentions = [...new Set(allTodos.filter(t => t.assignee_id).map(t => `<@${t.assignee_id}>`))];
+                    const mentions = [...new Set(allTodos.filter(t => t.assignee_id).map(t => formatMention(t.assignee_id, t.assignee_type)))];
                     const content = mentions.length > 0 ? mentions.join(' ') : undefined;
 
                     await channel.send({ content, embeds: [embed], components });
@@ -98,7 +98,7 @@ function startReminder(client) {
                         try {
                             const embed = buildReminderNotificationEmbed(todo);
                             const components = buildTaskActionComponents([todo]);
-                            const content = todo.assignee_id ? `<@${todo.assignee_id}>` : undefined;
+                            const content = todo.assignee_id ? formatMention(todo.assignee_id, todo.assignee_type) : undefined;
 
                             await channel.send({ content, embeds: [embed], components });
                             markReminderSent(todo.id, guild.guild_id);

@@ -26,7 +26,12 @@ const command = new SlashCommandBuilder()
     )
     .addUserOption(option =>
         option.setName('assignee')
-            .setDescription('担当者')
+            .setDescription('担当者（ユーザー）')
+            .setRequired(false)
+    )
+    .addRoleOption(option =>
+        option.setName('role')
+            .setDescription('割り当て先（ロール）')
             .setRequired(false)
     )
     .addStringOption(option =>
@@ -39,6 +44,7 @@ async function execute(interaction) {
     const name = interaction.options.getString('name');
     const priority = interaction.options.getInteger('priority') ?? 0;
     const assignee = interaction.options.getUser('assignee');
+    const role = interaction.options.getRole('role');
     const dueInput = interaction.options.getString('due');
     const guildId = interaction.guild.id;
     await interaction.deferReply();
@@ -59,7 +65,8 @@ async function execute(interaction) {
         name,
         priority,
         due_date: dueDate,
-        assignee_id: assignee?.id ?? null,
+        assignee_id: role?.id ?? assignee?.id ?? null,
+        assignee_type: role ? 'role' : 'user',
         category_id: null,
         category_name: null,
         category_emoji: null,

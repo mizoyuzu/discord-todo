@@ -1,6 +1,6 @@
 // === FILE: src/utils/embeds.js ===
 const { EmbedBuilder } = require('discord.js');
-const { jstToUnix } = require('./timezone');
+const { jstToUnix, formatMention } = require('./timezone');
 
 const PRIORITY_LABELS = ['低', '中', '高', '緊急'];
 const PRIORITY_COLORS = [0x2ecc71, 0xf1c40f, 0xe67e22, 0xe74c3c];
@@ -39,7 +39,7 @@ function buildTodoListEmbed(todos, guildName, page, totalPages, totalCount, filt
             const isOverdue = ts < Math.floor(Date.now() / 1000);
             details.push(isOverdue ? `期限超過 <t:${ts}:R>` : `<t:${ts}:R>`);
         }
-        if (todo.assignee_id) details.push(`<@${todo.assignee_id}>`);
+        if (todo.assignee_id) details.push(formatMention(todo.assignee_id, todo.assignee_type));
         if (todo.category_name) details.push(`${todo.category_name}`);
         if (todo.recurrence) {
             details.push(`${RECURRENCE_LABELS[todo.recurrence] || todo.recurrence}`);
@@ -65,7 +65,7 @@ function buildRecapEmbed(todayTodos, overdueTodos) {
     if (overdueTodos.length > 0) {
         const lines = overdueTodos.map(t => {
             const due = t.due_date ? `<t:${jstToUnix(t.due_date)}:R>` : '';
-            const assignee = t.assignee_id ? `<@${t.assignee_id}>` : '';
+            const assignee = t.assignee_id ? formatMention(t.assignee_id, t.assignee_type) : '';
             const parts = [`#${t.id} ${t.name}`, due, assignee].filter(Boolean);
             return parts.join(' | ');
         });
@@ -75,7 +75,7 @@ function buildRecapEmbed(todayTodos, overdueTodos) {
     if (todayTodos.length > 0) {
         const lines = todayTodos.map(t => {
             const due = t.due_date ? `<t:${jstToUnix(t.due_date)}:R>` : '';
-            const assignee = t.assignee_id ? `<@${t.assignee_id}>` : '';
+            const assignee = t.assignee_id ? formatMention(t.assignee_id, t.assignee_type) : '';
             const parts = [`#${t.id} ${t.name}`, due, assignee].filter(Boolean);
             return parts.join(' | ');
         });
@@ -142,7 +142,7 @@ function buildConfirmationEmbed(data, creatorId) {
     }
 
     if (data.assignee_id) {
-        embed.addFields({ name: '担当者', value: `<@${data.assignee_id}>`, inline: true });
+        embed.addFields({ name: '割り当て先', value: formatMention(data.assignee_id, data.assignee_type), inline: true });
     }
 
     if (data.category_name) {
@@ -180,7 +180,7 @@ function buildCreatedEmbed(todo, creatorId) {
     }
 
     if (todo.assignee_id) {
-        embed.addFields({ name: '担当者', value: `<@${todo.assignee_id}>`, inline: true });
+        embed.addFields({ name: '割り当て先', value: formatMention(todo.assignee_id, todo.assignee_type), inline: true });
     }
 
     if (todo.category_name) {
@@ -214,7 +214,7 @@ function buildReminderNotificationEmbed(todo) {
         parts.push(`期限: <t:${ts}:F>`);
     }
     if (todo.assignee_id) {
-        parts.push(`担当: <@${todo.assignee_id}>`);
+        parts.push(`割当: ${formatMention(todo.assignee_id, todo.assignee_type)}`);
     }
 
     embed.setDescription(parts.join(' | '));

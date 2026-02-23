@@ -14,7 +14,7 @@ const { handleNaturalLanguageCreate } = require('./commands/create');
 const {
     ActionRowBuilder, ChannelSelectMenuBuilder, ChannelType,
     ModalBuilder, TextInputBuilder, TextInputStyle,
-    UserSelectMenuBuilder, ButtonBuilder, ButtonStyle, MessageFlags,
+    UserSelectMenuBuilder, RoleSelectMenuBuilder, ButtonBuilder, ButtonStyle, MessageFlags,
 } = require('discord.js');
 
 // Ensure data directory exists
@@ -23,8 +23,6 @@ if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// MessageContent is a privileged intent - enable it in Discord Developer Portal:
-// Bot > Privileged Gateway Intents > Message Content Intent
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -47,32 +45,26 @@ for (const file of commandFiles) {
 }
 
 client.once(Events.ClientReady, (c) => {
-    console.log(`✅ Logged in as ${c.user.tag}`);
-    console.log(`📋 Serving ${c.guilds.cache.size} guilds`);
+    console.log(`Logged in as ${c.user.tag}`);
+    console.log(`Serving ${c.guilds.cache.size} guilds`);
     startReminder(client);
 });
 
 // ── @mention handler: natural language task creation ──
 client.on(Events.MessageCreate, async (message) => {
-    // Ignore bots and DMs
     if (message.author.bot || !message.guild) return;
-
-    // Check if bot is mentioned
     if (!message.mentions.has(client.user)) return;
 
-    // Strip the bot mention to get the task text
     let text = message.content
         .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
         .trim();
 
     if (!text) {
-        return message.reply('📝 タスクの内容を書いてください！\n例: `@ToDo Bot プリンターインク確認を来週の月曜に、重要度は高`');
+        return message.reply('タスクの内容を書いてください');
     }
 
     try {
-        // Create a fake deferred interaction-like object
-        // We use message.reply to mimic interaction.editReply
-        let replyMsg = await message.reply('🤔 解析中...');
+        let replyMsg = await message.reply('解析中...');
 
         const fakeInteraction = {
             user: message.author,
@@ -92,7 +84,7 @@ client.on(Events.MessageCreate, async (message) => {
         await handleNaturalLanguageCreate(fakeInteraction, text);
     } catch (error) {
         console.error('Mention handler error:', error);
-        message.reply('⚠️ エラーが発生しました。もう一度お試しください。').catch(() => {});
+        message.reply('エラーが発生しました。もう一度お試しください。').catch(() => {});
     }
 });
 
@@ -115,6 +107,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
             if (interaction.customId === 'add_assignee_btn') {
                 return handleShowAssigneeSelect(interaction);
+            }
+            if (interaction.customId === 'add_role_btn') {
+                return handleShowRoleSelect(interaction);
             }
             if (interaction.customId.startsWith('settings_reminder_ch')) {
                 return handleShowChannelSelect(interaction, 'reminder');
@@ -142,7 +137,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
     } catch (error) {
         console.error('Interaction error:', error);
-        const content = '⚠️ エラーが発生しました。もう一度お試しください。';
+        const content = 'エラーが発生しました。もう一度お試しください。';
         try {
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content, flags: [MessageFlags.Ephemeral] });
@@ -162,7 +157,7 @@ async function handleAddConfirm(interaction) {
     const stateKey = `${interaction.user.id}_${guildId}`;
     const state = userStates.get(stateKey);
     if (!state) {
-        return interaction.update({ content: '⚠️ セッションが期限切れです。もう一度 /todo から追加してください。', components: [] });
+        return interaction.update({ content: 'セッションが期限切れです。もう一度 /todo から追加してください。', components: [] });
     }
 
     const todoData = {
@@ -170,10 +165,12 @@ async function handleAddConfirm(interaction) {
         priority: state.priority ?? 0,
         due_date: state.due_date,
         assignee_id: state.assignee_id,
+        assignee_type: state.assignee_type || 'user',
         category_id: state.category_id,
         category_name: null,
         category_emoji: null,
         recurrence: state.recurrence,
+        reminder_at: state.reminder_at || null,
         created_by: state.created_by,
         timestamp: Date.now(),
         channelId: interaction.channelId,
@@ -193,9 +190,9 @@ async function handleAddConfirm(interaction) {
 
     const embed = buildConfirmationEmbed(todoData, interaction.user.id);
     const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setStyle(ButtonStyle.Secondary),
     );
 
     await interaction.update({ content: null, embeds: [embed], components: [buttons] });
@@ -214,10 +211,12 @@ async function handleAddWithoutDate(interaction) {
         priority: 0,
         due_date: null,
         assignee_id: null,
+        assignee_type: 'user',
         category_id: null,
         category_name: null,
         category_emoji: null,
         recurrence: null,
+        reminder_at: null,
         created_by: interaction.user.id,
         timestamp: Date.now(),
         channelId: interaction.channelId,
@@ -226,9 +225,9 @@ async function handleAddWithoutDate(interaction) {
 
     const embed = buildConfirmationEmbed(todoData, interaction.user.id);
     const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setStyle(ButtonStyle.Secondary),
     );
 
     await interaction.update({ content: null, embeds: [embed], components: [buttons] });
@@ -238,14 +237,23 @@ async function handleShowAssigneeSelect(interaction) {
     const select = new ActionRowBuilder().addComponents(
         new UserSelectMenuBuilder()
             .setCustomId('add_assignee')
-            .setPlaceholder('👤 担当者を選択')
+            .setPlaceholder('担当者を選択')
+    );
+    await interaction.reply({ components: [select], flags: [MessageFlags.Ephemeral] });
+}
+
+async function handleShowRoleSelect(interaction) {
+    const select = new ActionRowBuilder().addComponents(
+        new RoleSelectMenuBuilder()
+            .setCustomId('add_role')
+            .setPlaceholder('ロールを選択')
     );
     await interaction.reply({ components: [select], flags: [MessageFlags.Ephemeral] });
 }
 
 async function handleShowChannelSelect(interaction, type) {
     const customId = type === 'reminder' ? 'select_reminder_ch' : 'select_todo_ch';
-    const label = type === 'reminder' ? '⏰ リマインダーチャンネルを選択' : '📋 ToDoチャンネルを選択';
+    const label = type === 'reminder' ? 'リマインダーチャンネルを選択' : 'ToDoチャンネルを選択';
 
     const select = new ActionRowBuilder().addComponents(
         new ChannelSelectMenuBuilder()
@@ -259,7 +267,7 @@ async function handleShowChannelSelect(interaction, type) {
 async function handleShowCategoryModal(interaction) {
     const modal = new ModalBuilder()
         .setCustomId('modal_add_category')
-        .setTitle('📁 カテゴリを追加');
+        .setTitle('カテゴリを追加');
 
     const nameInput = new TextInputBuilder()
         .setCustomId('category_name')
@@ -270,11 +278,10 @@ async function handleShowCategoryModal(interaction) {
 
     const emojiInput = new TextInputBuilder()
         .setCustomId('category_emoji')
-        .setLabel('絵文字（省略可）')
+        .setLabel('絵文字')
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setMaxLength(10)
-        .setPlaceholder('📁');
+        .setMaxLength(10);
 
     modal.addComponents(
         new ActionRowBuilder().addComponents(nameInput),

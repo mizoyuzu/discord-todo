@@ -58,7 +58,7 @@ function initTables() {
     CREATE INDEX IF NOT EXISTS idx_categories_guild ON categories(guild_id);
   `);
 
-  // Migration: add reminder_at and reminder_sent columns if missing
+  // Migrations
   try {
     const cols = db.prepare("PRAGMA table_info(todos)").all().map(c => c.name);
     if (!cols.includes('reminder_at')) {
@@ -66,6 +66,9 @@ function initTables() {
     }
     if (!cols.includes('reminder_sent')) {
       db.exec('ALTER TABLE todos ADD COLUMN reminder_sent INTEGER DEFAULT 0');
+    }
+    if (!cols.includes('assignee_type')) {
+      db.exec("ALTER TABLE todos ADD COLUMN assignee_type TEXT DEFAULT 'user'");
     }
   } catch (e) {
     console.error('[DB] Migration error:', e.message);
@@ -123,14 +126,15 @@ function addTodo(guildId, data) {
   const db = getDb();
   const now = nowJST();
   return db.prepare(`
-    INSERT INTO todos (guild_id, name, priority, due_date, assignee_id, category_id, recurrence, created_by, created_at, reminder_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO todos (guild_id, name, priority, due_date, assignee_id, assignee_type, category_id, recurrence, created_by, created_at, reminder_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     guildId,
     data.name,
     data.priority ?? 0,
     data.due_date ?? null,
     data.assignee_id ?? null,
+    data.assignee_type ?? 'user',
     data.category_id ?? null,
     data.recurrence ?? null,
     data.created_by,

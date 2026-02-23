@@ -38,6 +38,7 @@ async function handleSelect(interaction) {
     if (customId === 'add_category') return handleAddCategory(interaction);
     if (customId === 'add_recurrence') return handleAddRecurrence(interaction);
     if (customId === 'add_assignee') return handleAddAssignee(interaction);
+    if (customId === 'add_role') return handleAddRole(interaction);
 
     // Channel selects
     if (customId === 'select_reminder_ch') return handleSetReminderChannel(interaction);
@@ -106,6 +107,7 @@ async function handleActionComplete(interaction) {
             priority: todo.priority,
             due_date: nextDue,
             assignee_id: todo.assignee_id,
+            assignee_type: todo.assignee_type || 'user',
             category_id: todo.category_id,
             recurrence: todo.recurrence,
             created_by: todo.created_by,
@@ -203,6 +205,7 @@ async function handleSelectDone(interaction) {
                     priority: todo.priority,
                     due_date: nextDue,
                     assignee_id: todo.assignee_id,
+                    assignee_type: todo.assignee_type || 'user',
                     category_id: todo.category_id,
                     recurrence: todo.recurrence,
                     created_by: todo.created_by,
@@ -261,6 +264,18 @@ async function handleAddAssignee(interaction) {
     const state = userStates.get(stateKey);
     if (state) {
         state.assignee_id = interaction.values[0];
+        state.assignee_type = 'user';
+        userStates.set(stateKey, state);
+    }
+    await interaction.deferUpdate();
+}
+
+async function handleAddRole(interaction) {
+    const stateKey = `${interaction.user.id}_${interaction.guild.id}`;
+    const state = userStates.get(stateKey);
+    if (state) {
+        state.assignee_id = interaction.values[0];
+        state.assignee_type = 'role';
         userStates.set(stateKey, state);
     }
     await interaction.deferUpdate();

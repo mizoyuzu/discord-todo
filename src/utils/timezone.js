@@ -58,3 +58,15 @@ function formatDateDisplayJST(dateStr) {
 }
 
 module.exports = { TZ, nowJST, formatDateJST, todayJST, jstToUnix, formatDateDisplayJST };
+
+/**
+ * Format a Discord mention for a user or role.
+ * @param {string} id - Discord user or role ID
+ * @param {string} type - 'user' or 'role'
+ */
+function formatMention(id, type) {
+    if (!id) return '';
+    return type === 'role' ? `<@&${id}>` : `<@${id}>`;
+}
+
+module.exports.formatMention = formatMention;

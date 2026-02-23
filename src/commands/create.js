@@ -25,8 +25,9 @@ async function handleNaturalLanguageCreate(interaction, text) {
     const guildId = interaction.guild.id;
     const categories = getCategories(guildId);
 
-    // Fetch guild members for assignee resolution
+    // Fetch guild members and roles for assignee resolution
     let members = [];
+    let roles = [];
     try {
         const fetched = await interaction.guild.members.fetch({ limit: 100 });
         members = fetched
@@ -39,9 +40,16 @@ async function handleNaturalLanguageCreate(interaction, text) {
     } catch (e) {
         console.error('[Create] Failed to fetch members:', e.message);
     }
+    try {
+        roles = interaction.guild.roles.cache
+            .filter(r => r.name !== '@everyone' && !r.managed)
+            .map(r => ({ id: r.id, name: r.name }));
+    } catch (e) {
+        console.error('[Create] Failed to fetch roles:', e.message);
+    }
 
     // Parse input via LLM
-    const parsed = await parseNaturalLanguageTodo(text, members, categories);
+    const parsed = await parseNaturalLanguageTodo(text, members, categories, roles);
 
     // Resolve category name/emoji for display
     let categoryName = null;
@@ -61,6 +69,7 @@ async function handleNaturalLanguageCreate(interaction, text) {
         priority: parsed.priority ?? 0,
         due_date: parsed.due_date || null,
         assignee_id: parsed.assignee_id || null,
+        assignee_type: parsed.assignee_type || 'user',
         category_id: parsed.category_id || null,
         category_name: categoryName,
         category_emoji: categoryEmoji,
