@@ -53,6 +53,8 @@ client.once(Events.ClientReady, (c) => {
 // ── @mention handler: natural language task creation ──
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot || !message.guild) return;
+    // @everyone/@here は無視し、Bot への直接メンションのみ反応
+    if (message.mentions.everyone) return;
     if (!message.mentions.has(client.user)) return;
 
     let text = message.content

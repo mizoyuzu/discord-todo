@@ -42,7 +42,7 @@ async function handleNaturalLanguageCreate(interaction, text) {
     }
     try {
         roles = interaction.guild.roles.cache
-            .filter(r => r.name !== '@everyone' && !r.managed)
+            .filter(r => !r.managed)
             .map(r => ({ id: r.id, name: r.name }));
     } catch (e) {
         console.error('[Create] Failed to fetch roles:', e.message);
