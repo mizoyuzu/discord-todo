@@ -1,16 +1,16 @@
 // === FILE: src/commands/add.js ===
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { getGuildSettings, getCategories } = require('../database');
+
 const { parseDateWithLLM } = require('../llm');
 const { buildConfirmationEmbed } = require('../utils/embeds');
 const { pendingCreations } = require('../utils/state');
 
 const command = new SlashCommandBuilder()
     .setName('add')
-    .setDescription('どこからでもタスクをすばやく追加します')
+    .setDescription('タスクを追加します')
     .addStringOption(option =>
         option.setName('name')
-            .setDescription('タスクの名前')
+            .setDescription('タスク名')
             .setRequired(true)
     )
     .addIntegerOption(option =>
@@ -18,10 +18,10 @@ const command = new SlashCommandBuilder()
             .setDescription('重要度')
             .setRequired(false)
             .addChoices(
-                { name: '🟢 低', value: 0 },
-                { name: '🟡 中', value: 1 },
-                { name: '🟠 高', value: 2 },
-                { name: '🔴 緊急', value: 3 },
+                { name: '低', value: 0 },
+                { name: '中', value: 1 },
+                { name: '高', value: 2 },
+                { name: '緊急', value: 3 },
             )
     )
     .addUserOption(option =>
@@ -31,7 +31,7 @@ const command = new SlashCommandBuilder()
     )
     .addStringOption(option =>
         option.setName('due')
-            .setDescription('期限（自然言語OK: "明日", "来週月曜", "3日後"）')
+            .setDescription('期限')
             .setRequired(false)
     );
 
@@ -41,17 +41,14 @@ async function execute(interaction) {
     const assignee = interaction.options.getUser('assignee');
     const dueInput = interaction.options.getString('due');
     const guildId = interaction.guild.id;
-    const settings = getGuildSettings(guildId);
-    const timezone = settings.timezone || 'Asia/Tokyo';
-
-    await interaction.deferReply(); // Public reply
+    await interaction.deferReply();
 
     let dueDate = null;
     if (dueInput) {
-        dueDate = await parseDateWithLLM(dueInput, timezone);
+        dueDate = await parseDateWithLLM(dueInput);
         if (!dueDate) {
             return interaction.editReply({
-                content: `⚠️ 日時を解析できませんでした: "${dueInput}"\nYYYY-MM-DD形式で再入力するか、別の表現をお試しください。`,
+                content: `日時を解析できませんでした: "${dueInput}"`,
             });
         }
     }
@@ -67,6 +64,7 @@ async function execute(interaction) {
         category_name: null,
         category_emoji: null,
         recurrence: null,
+        reminder_at: null,
         created_by: interaction.user.id,
         timestamp: Date.now(),
         channelId: interaction.channelId,
@@ -77,9 +75,9 @@ async function execute(interaction) {
     const embed = buildConfirmationEmbed(todoData, interaction.user.id);
 
     const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setStyle(ButtonStyle.Secondary),
     );
 
     await interaction.editReply({ embeds: [embed], components: [buttons] });

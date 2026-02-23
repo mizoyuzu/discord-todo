@@ -7,6 +7,7 @@ const {
     getGuildSettings, updateGuildSettings, completeTodo, reopenTodo,
     deleteTodo, addTodo, getTodoById, updateTodo, getCategories, deleteCategory,
 } = require('../database');
+const { formatDateDisplayJST } = require('../utils/timezone');
 const { sendTodoList, sendCompletedList } = require('../utils/pagination');
 const { buildSettingsEmbed } = require('../utils/embeds');
 const { buildSettingsComponents } = require('../commands/settings');
@@ -28,6 +29,9 @@ async function handleSelect(interaction) {
     if (customId === 'action_edit') return handleActionEdit(interaction);
     if (customId === 'action_delete') return handleActionDelete(interaction);
     if (customId === 'action_reopen') return handleActionReopen(interaction);
+
+    // select_done from reminder/recap messages
+    if (customId === 'select_done') return handleSelectDone(interaction);
 
     // Add flow selects
     if (customId === 'add_priority') return handleAddPriority(interaction);
@@ -67,7 +71,7 @@ async function handleDeleteCategory(interaction) {
     const embed = buildSettingsEmbed(settings, categories);
     const components = buildSettingsComponents(settings, categories);
 
-    await interaction.update({ content: '✅ カテゴリを削除しました', embeds: [embed], components });
+    await interaction.update({ content: 'カテゴリを削除しました', embeds: [embed], components });
 }
 
 // ── Filter ──
@@ -117,13 +121,13 @@ async function handleActionEdit(interaction) {
     const todoId = parseInt(interaction.values[0]);
     const todo = getTodoById(todoId, guildId);
     if (!todo) {
-        return interaction.reply({ content: '⚠️ タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: 'タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
     }
 
     const settings = getGuildSettings(guildId);
     const modal = new ModalBuilder()
         .setCustomId(`modal_edit_${todoId}`)
-        .setTitle(`📝 タスク #${todoId} を編集`);
+        .setTitle(`タスク #${todoId} を編集`);
 
     const nameInput = new TextInputBuilder()
         .setCustomId('edit_name')
@@ -137,12 +141,11 @@ async function handleActionEdit(interaction) {
     if (settings.enabled_fields.includes('due_date')) {
         const dueInput = new TextInputBuilder()
             .setCustomId('edit_due')
-            .setLabel('期限（自然言語OK / 空欄で変更なし）')
+            .setLabel('期限')
             .setStyle(TextInputStyle.Short)
-            .setRequired(false)
-            .setPlaceholder('例: 明日の15時, 3日後');
+            .setRequired(false);
         if (todo.due_date) {
-            dueInput.setValue(new Date(todo.due_date).toLocaleDateString('ja-JP'));
+            dueInput.setValue(formatDateDisplayJST(todo.due_date));
         }
         modal.addComponents(new ActionRowBuilder().addComponents(dueInput));
     }
@@ -155,7 +158,7 @@ async function handleActionDelete(interaction) {
     const todoId = parseInt(interaction.values[0]);
     const todo = getTodoById(todoId, guildId);
     if (!todo) {
-        return interaction.reply({ content: '⚠️ タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: 'タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
     }
 
     const row = new ActionRowBuilder().addComponents(
@@ -164,7 +167,7 @@ async function handleActionDelete(interaction) {
     );
 
     await interaction.reply({
-        content: `🗑️ **${todo.name}** (ID: #${todoId}) を削除しますか？`,
+        content: `**${todo.name}** (#${todoId}) を削除しますか？`,
         components: [row],
         flags: [MessageFlags.Ephemeral],
     });
@@ -177,6 +180,48 @@ async function handleActionReopen(interaction) {
 
     await interaction.deferUpdate();
     await sendCompletedList(interaction, guildId);
+}
+
+// ── Select done (from reminder/recap messages) ──
+
+async function handleSelectDone(interaction) {
+    const guildId = interaction.guild.id;
+    const selectedIds = interaction.values.map(v => parseInt(v));
+    const completed = [];
+
+    for (const todoId of selectedIds) {
+        const todo = getTodoById(todoId, guildId);
+        if (todo && !todo.completed) {
+            completeTodo(todoId, guildId);
+            completed.push(`#${todoId} ${todo.name}`);
+
+            // Handle recurrence
+            if (todo.recurrence && todo.recurrence !== 'none') {
+                const nextDue = calculateNextDue(todo.due_date, todo.recurrence);
+                addTodo(guildId, {
+                    name: todo.name,
+                    priority: todo.priority,
+                    due_date: nextDue,
+                    assignee_id: todo.assignee_id,
+                    category_id: todo.category_id,
+                    recurrence: todo.recurrence,
+                    created_by: todo.created_by,
+                });
+            }
+        }
+    }
+
+    if (completed.length > 0) {
+        await interaction.update({
+            content: `完了にしました:\n${completed.join('\n')}`,
+            components: [],
+        });
+    } else {
+        await interaction.update({
+            content: '対象のタスクは既に完了しています。',
+            components: [],
+        });
+    }
 }
 
 // ── Add flow ──
@@ -233,7 +278,7 @@ async function handleSetReminderChannel(interaction) {
     const embed = buildSettingsEmbed(settings, categories);
     const components = buildSettingsComponents(settings, categories);
 
-    await interaction.update({ content: `✅ リマインダーチャンネルを <#${channelId}> に設定しました`, embeds: [embed], components });
+    await interaction.update({ content: `リマインダーチャンネルを <#${channelId}> に設定しました`, embeds: [embed], components });
 }
 
 async function handleSetTodoChannel(interaction) {
@@ -246,21 +291,34 @@ async function handleSetTodoChannel(interaction) {
     const embed = buildSettingsEmbed(settings, categories);
     const components = buildSettingsComponents(settings, categories);
 
-    await interaction.update({ content: `✅ ToDoチャンネルを <#${channelId}> に設定しました`, embeds: [embed], components });
+    await interaction.update({ content: `ToDoチャンネルを <#${channelId}> に設定しました`, embeds: [embed], components });
 }
 
 // ── Utility ──
 
 function calculateNextDue(currentDue, recurrence) {
     if (!currentDue) return null;
-    const date = new Date(currentDue);
+    const { jstToUnix, formatDateJST } = require('../utils/timezone');
+    // Parse as JST, add interval, format back as JST string
+    const ts = jstToUnix(currentDue);
+    if (!ts) return null;
+    const date = new Date(ts * 1000);
+    // Use UTC methods to avoid local timezone interference,
+    // but since we converted JST→UTC correctly, we need to work in JST.
+    // Easiest: parse parts from the string directly
+    const parts = currentDue.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+    if (!parts) return null;
+    let [, y, m, d, h, mi, s] = parts.map(Number);
     switch (recurrence) {
-        case 'daily': date.setDate(date.getDate() + 1); break;
-        case 'weekly': date.setDate(date.getDate() + 7); break;
-        case 'monthly': date.setMonth(date.getMonth() + 1); break;
+        case 'daily': d += 1; break;
+        case 'weekly': d += 7; break;
+        case 'monthly': m += 1; break;
         default: return null;
     }
-    return date.toISOString().slice(0, 19);
+    // Use Date to normalize overflow (e.g. day 32 → next month)
+    const normalized = new Date(y, m - 1, d, h, mi, s);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${normalized.getFullYear()}-${pad(normalized.getMonth() + 1)}-${pad(normalized.getDate())}T${pad(normalized.getHours())}:${pad(normalized.getMinutes())}:${pad(normalized.getSeconds())}`;
 }
 
-module.exports = { handleSelect };
+module.exports = { handleSelect, calculateNextDue };

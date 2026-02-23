@@ -1,5 +1,6 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const { nowJST } = require('./utils/timezone');
 
 const DB_PATH = path.join(__dirname, '..', 'data', 'todo.db');
 
@@ -46,6 +47,8 @@ function initTables() {
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL,
       completed_at TEXT,
+      reminder_at TEXT,
+      reminder_sent INTEGER DEFAULT 0,
       FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
     );
 
@@ -54,6 +57,19 @@ function initTables() {
     CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
     CREATE INDEX IF NOT EXISTS idx_categories_guild ON categories(guild_id);
   `);
+
+  // Migration: add reminder_at and reminder_sent columns if missing
+  try {
+    const cols = db.prepare("PRAGMA table_info(todos)").all().map(c => c.name);
+    if (!cols.includes('reminder_at')) {
+      db.exec('ALTER TABLE todos ADD COLUMN reminder_at TEXT');
+    }
+    if (!cols.includes('reminder_sent')) {
+      db.exec('ALTER TABLE todos ADD COLUMN reminder_sent INTEGER DEFAULT 0');
+    }
+  } catch (e) {
+    console.error('[DB] Migration error:', e.message);
+  }
 }
 
 // ── Guild Settings ──
@@ -105,10 +121,10 @@ function deleteCategory(guildId, categoryId) {
 
 function addTodo(guildId, data) {
   const db = getDb();
-  const now = new Date().toISOString();
+  const now = nowJST();
   return db.prepare(`
-    INSERT INTO todos (guild_id, name, priority, due_date, assignee_id, category_id, recurrence, created_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO todos (guild_id, name, priority, due_date, assignee_id, category_id, recurrence, created_by, created_at, reminder_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     guildId,
     data.name,
@@ -118,7 +134,8 @@ function addTodo(guildId, data) {
     data.category_id ?? null,
     data.recurrence ?? null,
     data.created_by,
-    now
+    now,
+    data.reminder_at ?? null
   );
 }
 
@@ -167,7 +184,7 @@ function updateTodo(todoId, guildId, updates) {
 }
 
 function completeTodo(todoId, guildId) {
-  const now = new Date().toISOString();
+  const now = nowJST();
   return getDb().prepare('UPDATE todos SET completed = 1, completed_at = ? WHERE id = ? AND guild_id = ?').run(now, todoId, guildId);
 }
 
@@ -201,6 +218,19 @@ function getAllGuildsWithReminders() {
   return getDb().prepare('SELECT * FROM guild_settings WHERE reminder_channel_id IS NOT NULL').all();
 }
 
+function getPendingReminders(guildId, nowStr) {
+  return getDb().prepare(`
+    SELECT t.*, c.name AS category_name, c.emoji AS category_emoji
+    FROM todos t LEFT JOIN categories c ON t.category_id = c.id
+    WHERE t.guild_id = ? AND t.reminder_at <= ? AND t.completed = 0 AND t.reminder_sent = 0
+    ORDER BY t.reminder_at ASC
+  `).all(guildId, nowStr);
+}
+
+function markReminderSent(todoId, guildId) {
+  return getDb().prepare('UPDATE todos SET reminder_sent = 1 WHERE id = ? AND guild_id = ?').run(todoId, guildId);
+}
+
 module.exports = {
   getDb,
   getGuildSettings,
@@ -219,4 +249,6 @@ module.exports = {
   getTodosDueToday,
   getOverdueTodos,
   getAllGuildsWithReminders,
+  getPendingReminders,
+  markReminderSent,
 };

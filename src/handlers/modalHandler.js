@@ -23,17 +23,16 @@ async function handleAddTodoModal(interaction) {
     const guildId = interaction.guild.id;
     const settings = getGuildSettings(guildId);
     const name = interaction.fields.getTextInputValue('todo_name');
-    const timezone = settings.timezone || 'Asia/Tokyo';
 
     let dueDate = null;
     try {
         const dueInput = interaction.fields.getTextInputValue('todo_due');
         if (dueInput && dueInput.trim()) {
             await interaction.deferReply();
-            dueDate = await parseDateWithLLM(dueInput, timezone);
+            dueDate = await parseDateWithLLM(dueInput);
             if (!dueDate) {
                 return interaction.editReply({
-                    content: `⚠️ 日時を解析できませんでした: "${dueInput}"\nタスク名「${name}」は期限なしで追加しますか？`,
+                    content: `日時を解析できませんでした: "${dueInput}"\nタスク名「${name}」は期限なしで追加しますか？`,
                     components: [new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId('add_without_date').setLabel('期限なしで追加').setStyle(ButtonStyle.Primary),
                         new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setStyle(ButtonStyle.Secondary),
@@ -56,6 +55,7 @@ async function handleAddTodoModal(interaction) {
         category_name: null,
         category_emoji: null,
         recurrence: null,
+        reminder_at: null,
         created_by: interaction.user.id,
         timestamp: Date.now(),
         channelId: interaction.channelId,
@@ -73,7 +73,7 @@ async function handleAddTodoModal(interaction) {
         userStates.set(stateKey, { ...todoData, step: 'additional' });
 
         const components = buildAdditionalFieldComponents(settings, guildId);
-        const content = `📝 **${name}** の追加情報を設定してください（任意）\nスキップする場合は「このまま追加」を押してください`;
+        const content = `**${name}** の追加情報を設定してください`;
         const payload = { content, components };
 
         if (interaction.deferred) return interaction.editReply(payload);
@@ -85,9 +85,9 @@ async function handleAddTodoModal(interaction) {
 
     const embed = buildConfirmationEmbed(todoData, interaction.user.id);
     const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setStyle(ButtonStyle.Secondary),
     );
 
     const payload = { embeds: [embed], components: [buttons] };
@@ -102,7 +102,7 @@ function buildAdditionalFieldComponents(settings, guildId) {
         rows.push(new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId('add_priority')
-                .setPlaceholder('⚡ 重要度を選択')
+                .setPlaceholder('重要度を選択')
                 .addOptions(
                     PRIORITY_LABELS.map((label, i) => ({ label, value: `${i}` }))
                 )
@@ -115,11 +115,10 @@ function buildAdditionalFieldComponents(settings, guildId) {
             rows.push(new ActionRowBuilder().addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId('add_category')
-                    .setPlaceholder('📁 カテゴリを選択')
+                    .setPlaceholder('カテゴリを選択')
                     .addOptions(categories.map(c => ({
                         label: c.name,
                         value: `${c.id}`,
-                        emoji: c.emoji || '📁',
                     })))
             ));
         }
@@ -129,12 +128,12 @@ function buildAdditionalFieldComponents(settings, guildId) {
         rows.push(new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId('add_recurrence')
-                .setPlaceholder('🔄 繰り返しを選択')
+                .setPlaceholder('繰り返しを選択')
                 .addOptions([
-                    { label: 'なし', value: 'none', emoji: '❌' },
-                    { label: '毎日', value: 'daily', emoji: '📅' },
-                    { label: '毎週', value: 'weekly', emoji: '📆' },
-                    { label: '毎月', value: 'monthly', emoji: '🗓️' },
+                    { label: 'なし', value: 'none' },
+                    { label: '毎日', value: 'daily' },
+                    { label: '毎週', value: 'weekly' },
+                    { label: '毎月', value: 'monthly' },
                 ])
         ));
     }
@@ -142,12 +141,12 @@ function buildAdditionalFieldComponents(settings, guildId) {
     // Confirm button (always add, limited to 5 rows)
     if (rows.length < 5) {
         const confirmRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('add_confirm').setLabel('このまま追加').setEmoji('✅').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('add_confirm').setLabel('このまま追加').setStyle(ButtonStyle.Success),
         );
 
         if (settings.enabled_fields.includes('assignee')) {
             confirmRow.addComponents(
-                new ButtonBuilder().setCustomId('add_assignee_btn').setLabel('担当者を設定').setEmoji('👤').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId('add_assignee_btn').setLabel('担当者を設定').setStyle(ButtonStyle.Primary),
             );
         }
 
@@ -165,11 +164,8 @@ async function handleEditCreateModal(interaction) {
     const data = pendingCreations.get(stateKey);
 
     if (!data) {
-        return interaction.reply({ content: '⚠️ セッションが期限切れです。もう一度コマンドを実行してください。', flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: 'セッションが期限切れです。もう一度コマンドを実行してください。', flags: [MessageFlags.Ephemeral] });
     }
-
-    const settings = getGuildSettings(guildId);
-    const timezone = settings.timezone || 'Asia/Tokyo';
 
     // Read fields from modal
     const newName = interaction.fields.getTextInputValue('create_name');
@@ -178,7 +174,7 @@ async function handleEditCreateModal(interaction) {
         const dueInput = interaction.fields.getTextInputValue('create_due');
         if (dueInput && dueInput.trim()) {
             await interaction.deferUpdate();
-            newDue = await parseDateWithLLM(dueInput, timezone);
+            newDue = await parseDateWithLLM(dueInput);
         }
     } catch {
         // Field not filled
@@ -197,7 +193,6 @@ async function handleEditCreateModal(interaction) {
     try {
         const aInput = interaction.fields.getTextInputValue('create_assignee');
         if (aInput && aInput.trim()) {
-            // Accept user ID or mention format
             const idMatch = aInput.match(/(\d{17,20})/);
             newAssignee = idMatch ? idMatch[1] : null;
         } else {
@@ -205,29 +200,25 @@ async function handleEditCreateModal(interaction) {
         }
     } catch { /* */ }
 
-    let newRecurrence = data.recurrence;
+    let newReminder = data.reminder_at;
     try {
-        const rInput = interaction.fields.getTextInputValue('create_recurrence');
+        const rInput = interaction.fields.getTextInputValue('create_reminder');
         if (rInput && rInput.trim()) {
-            const valid = ['daily', 'weekly', 'monthly'];
-            newRecurrence = valid.includes(rInput.trim().toLowerCase()) ? rInput.trim().toLowerCase() : null;
+            await (interaction.deferred ? Promise.resolve() : interaction.deferUpdate());
+            newReminder = await parseDateWithLLM(rInput);
         } else {
-            newRecurrence = null;
+            newReminder = null;
         }
     } catch { /* */ }
 
     // Update pending data
     data.name = newName;
-    data.due_date = newDue !== null ? newDue : (newDue === null && !interaction.deferred ? data.due_date : null);
     data.priority = newPriority;
     data.assignee_id = newAssignee;
-    data.recurrence = newRecurrence;
+    data.reminder_at = newReminder;
     data.timestamp = Date.now();
 
-    // Handle due_date: if the modal had a due input but we haven't deferred yet,
-    // keep old date. If deferred (meaning we parsed), use the result.
-    // Simplify: if user typed something for due and we parsed it, use it.
-    // If user left it empty, clear it. If user typed something unparseable, keep old.
+    // Handle due_date
     try {
         const dueInput = interaction.fields.getTextInputValue('create_due');
         if (!dueInput || !dueInput.trim()) {
@@ -235,7 +226,6 @@ async function handleEditCreateModal(interaction) {
         } else if (newDue) {
             data.due_date = newDue;
         }
-        // else: keep data.due_date as-is (parse failed, keep old)
     } catch {
         // field not present, keep as-is
     }
@@ -244,12 +234,12 @@ async function handleEditCreateModal(interaction) {
 
     // Show updated confirmation
     const embed = buildConfirmationEmbed(data, interaction.user.id);
-    embed.setAuthor({ name: '✏️ 編集済み' });
+    embed.setAuthor({ name: '編集済み' });
 
     const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setStyle(ButtonStyle.Secondary),
     );
 
     const payload = { embeds: [embed], components: [buttons] };
@@ -266,7 +256,7 @@ async function handleEditTodoModal(interaction) {
     const guildId = interaction.guild.id;
     const todo = getTodoById(todoId, guildId);
     if (!todo) {
-        return interaction.reply({ content: '⚠️ タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: 'タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
     }
 
     const newName = interaction.fields.getTextInputValue('edit_name');
@@ -276,8 +266,7 @@ async function handleEditTodoModal(interaction) {
         const dueInput = interaction.fields.getTextInputValue('edit_due');
         if (dueInput && dueInput.trim()) {
             await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-            const settings = getGuildSettings(guildId);
-            const parsed = await parseDateWithLLM(dueInput, settings.timezone || 'Asia/Tokyo');
+            const parsed = await parseDateWithLLM(dueInput);
             if (parsed) updates.due_date = parsed;
         }
     } catch {
@@ -286,7 +275,7 @@ async function handleEditTodoModal(interaction) {
 
     updateTodo(todoId, guildId, updates);
 
-    const content = `✅ タスク #${todoId} を更新しました: **${newName}**`;
+    const content = `タスク #${todoId} を更新しました: **${newName}**`;
     if (interaction.deferred) return interaction.editReply({ content });
     return interaction.reply({ content, flags: [MessageFlags.Ephemeral] });
 }
@@ -301,7 +290,7 @@ async function handleAddCategoryModal(interaction) {
 
     const result = addCategory(guildId, name, emoji);
     if (!result) {
-        return interaction.reply({ content: `⚠️ カテゴリ「${name}」は既に存在します。`, flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: `カテゴリ「${name}」は既に存在します。`, flags: [MessageFlags.Ephemeral] });
     }
 
     // Refresh settings view
@@ -312,7 +301,7 @@ async function handleAddCategoryModal(interaction) {
     const embed = buildSettingsEmbed(settings, categories);
     const components = buildSettingsComponents(settings, categories);
 
-    return interaction.reply({ content: `✅ カテゴリ「${emoji} ${name}」を追加しました`, embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
+    return interaction.reply({ content: `カテゴリ「${name}」を追加しました`, embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
 }
 
 module.exports = { handleModal, buildAdditionalFieldComponents };

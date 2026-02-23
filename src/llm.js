@@ -2,7 +2,7 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Models to try in order. Free tier models get rate-limited intermittently.
 const MODELS = [
-    'meta-llama/llama-3.3-70b-instruct:free',
+    'nvidia/nemotron-3-nano-30b-a3b:free',
     'google/gemma-3-12b-it:free',
     'google/gemma-3-4b-it:free',
 ];
@@ -120,25 +120,10 @@ function extractJSON(text) {
     return JSON.parse(text.trim());
 }
 
-function getCurrentTimeString(timezone) {
-    try {
-        const now = new Date();
-        const formatter = new Intl.DateTimeFormat('ja-JP', {
-            timeZone: timezone || 'Asia/Tokyo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false,
-        });
-        const parts = formatter.formatToParts(now);
-        const get = (type) => parts.find(p => p.type === type)?.value || '';
-        return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
-    } catch {
-        return new Date().toISOString().replace('Z', '');
-    }
+const { nowJST, TZ } = require('./utils/timezone');
+
+function getCurrentTimeString() {
+    return nowJST();
 }
 
 function getDayOfWeek(dateStr) {
@@ -147,11 +132,11 @@ function getDayOfWeek(dateStr) {
     return days[d.getDay()] || '';
 }
 
-async function parseDateWithLLM(input, timezone) {
+async function parseDateWithLLM(input) {
     if (!input || !input.trim()) return null;
 
-    const currentTime = getCurrentTimeString(timezone);
-    const tz = timezone || 'Asia/Tokyo';
+    const currentTime = getCurrentTimeString();
+    const tz = TZ;
     const dow = getDayOfWeek(currentTime);
 
     const messages = [
@@ -166,7 +151,7 @@ async function parseDateWithLLM(input, timezone) {
     ];
 
     try {
-        const result = await callOpenRouter(messages, 64);
+        const result = await callOpenRouter(messages, 512);
         const match = result.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
         if (match) return match[1];
         console.error('[DateParser] No date found in LLM response:', result);
@@ -177,7 +162,7 @@ async function parseDateWithLLM(input, timezone) {
     }
 }
 
-async function parseNaturalLanguageTodo(input, guildMembers, categories, timezone) {
+async function parseNaturalLanguageTodo(input, guildMembers, categories) {
     const fallback = {
         name: input,
         due_date: null,
@@ -185,11 +170,12 @@ async function parseNaturalLanguageTodo(input, guildMembers, categories, timezon
         priority: null,
         recurrence: null,
         category_id: null,
+        reminder_at: null,
     };
 
     try {
-        const currentTime = getCurrentTimeString(timezone);
-        const tz = timezone || 'Asia/Tokyo';
+        const currentTime = getCurrentTimeString();
+        const tz = TZ;
         const dow = getDayOfWeek(currentTime);
 
         const memberList = (guildMembers || []).map(m =>
@@ -211,16 +197,18 @@ Categories:
 ${categoryList || '(none)'}
 
 Return ONLY a JSON object:
-{"name":"task name only","due_date":"YYYY-MM-DDTHH:mm:ss or null","assignee_id":"member ID or null","priority":0-3 or null,"recurrence":"daily|weekly|monthly or null","category_id":number or null}
+{"name":"task name only","due_date":"YYYY-MM-DDTHH:mm:ss or null","assignee_id":"member ID or null","priority":0-3 or null,"recurrence":"daily|weekly|monthly or null","category_id":number or null,"reminder_at":"YYYY-MM-DDTHH:mm:ss or null"}
 
-Priority: 緊急/至急=3, 重要/高=2, 中=1, 低=0. Time default=23:59:59. Output ONLY JSON.`;
+Priority: 緊急/至急=3, 重要/高=2, 中=1, 低=0. Time default=23:59:59.
+reminder_at: when to send a reminder notification. If user says "リマインド" or "通知" with a time, extract it. Otherwise null.
+Output ONLY JSON.`;
 
         const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: input },
         ];
 
-        const result = await callOpenRouter(messages, 512);
+        const result = await callOpenRouter(messages, 2048);
         const parsed = extractJSON(result);
 
         return {
@@ -230,6 +218,7 @@ Priority: 緊急/至急=3, 重要/高=2, 中=1, 低=0. Time default=23:59:59. Ou
             priority: typeof parsed.priority === 'number' && parsed.priority >= 0 && parsed.priority <= 3 ? parsed.priority : null,
             recurrence: ['daily', 'weekly', 'monthly'].includes(parsed.recurrence) ? parsed.recurrence : null,
             category_id: typeof parsed.category_id === 'number' ? parsed.category_id : null,
+            reminder_at: typeof parsed.reminder_at === 'string' ? parsed.reminder_at : null,
         };
     } catch (err) {
         console.error('[NLParser] All models failed:', err.message);

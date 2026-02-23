@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { parseNaturalLanguageTodo } = require('../llm');
-const { getGuildSettings, getCategories } = require('../database');
+const { getCategories } = require('../database');
 const { buildConfirmationEmbed } = require('../utils/embeds');
 const { pendingCreations } = require('../utils/state');
 
@@ -9,7 +9,7 @@ const command = new SlashCommandBuilder()
     .setDescription('自然言語でタスクを作成します')
     .addStringOption(option =>
         option.setName('text')
-            .setDescription('タスクの内容を自由に入力（例: 「プリンターインク確認を来週の月曜に、重要度は高」）')
+            .setDescription('タスクの内容')
             .setRequired(true)
     );
 
@@ -23,9 +23,7 @@ async function execute(interaction) {
  */
 async function handleNaturalLanguageCreate(interaction, text) {
     const guildId = interaction.guild.id;
-    const settings = getGuildSettings(guildId);
     const categories = getCategories(guildId);
-    const timezone = settings.timezone || 'Asia/Tokyo';
 
     // Fetch guild members for assignee resolution
     let members = [];
@@ -43,7 +41,7 @@ async function handleNaturalLanguageCreate(interaction, text) {
     }
 
     // Parse input via LLM
-    const parsed = await parseNaturalLanguageTodo(text, members, categories, timezone);
+    const parsed = await parseNaturalLanguageTodo(text, members, categories);
 
     // Resolve category name/emoji for display
     let categoryName = null;
@@ -67,6 +65,7 @@ async function handleNaturalLanguageCreate(interaction, text) {
         category_name: categoryName,
         category_emoji: categoryEmoji,
         recurrence: parsed.recurrence || null,
+        reminder_at: parsed.reminder_at || null,
         created_by: interaction.user.id,
         timestamp: Date.now(),
         channelId: interaction.channelId,
@@ -75,17 +74,17 @@ async function handleNaturalLanguageCreate(interaction, text) {
 
     // Build confirmation embed
     const embed = buildConfirmationEmbed(todoData, interaction.user.id);
-    const aiWorked = parsed.due_date || parsed.assignee_id || parsed.priority !== null || parsed.name !== text;
+    const aiWorked = parsed.due_date || parsed.assignee_id || parsed.priority !== null || parsed.reminder_at || parsed.name !== text;
     if (aiWorked) {
-        embed.setAuthor({ name: '🤖 AI解析結果' });
+        embed.setAuthor({ name: 'AI解析結果' });
     } else {
-        embed.setAuthor({ name: '⚠️ AI解析が利用できませんでした。編集してください' });
+        embed.setAuthor({ name: 'AI解析が利用できませんでした。編集してください' });
     }
 
     const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setEmoji('✏️').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setEmoji('❌').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('edit_create').setLabel('編集する').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('cancel_create').setLabel('キャンセル').setStyle(ButtonStyle.Secondary),
     );
 
     await interaction.editReply({ embeds: [embed], components: [buttons] });

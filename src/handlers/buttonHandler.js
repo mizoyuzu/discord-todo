@@ -5,6 +5,7 @@ const {
     ButtonBuilder, ButtonStyle, MessageFlags,
 } = require('discord.js');
 const { getGuildSettings, getTodos, completeTodo, reopenTodo, deleteTodo, addTodo, getTodoById } = require('../database');
+const { formatDateDisplayJST, jstToUnix } = require('../utils/timezone');
 const { sendTodoList, sendCompletedList } = require('../utils/pagination');
 const { buildCreatedEmbed } = require('../utils/embeds');
 const { pendingCreations } = require('../utils/state');
@@ -25,6 +26,11 @@ setInterval(cleanupExpiredStates, 5 * 60 * 1000);
 async function handleButton(interaction) {
     const { customId } = interaction;
     const guildId = interaction.guild.id;
+
+    // quick_done_{id} handler
+    if (customId.startsWith('quick_done_')) {
+        return handleQuickDone(interaction, guildId);
+    }
 
     switch (customId) {
         // === Create confirmation flow ===
@@ -50,13 +56,51 @@ async function handleButton(interaction) {
     }
 }
 
+// === Quick done handler (from reminder/recap buttons) ===
+
+async function handleQuickDone(interaction, guildId) {
+    const todoId = parseInt(interaction.customId.replace('quick_done_', ''));
+    const todo = getTodoById(todoId, guildId);
+    if (!todo) {
+        return interaction.reply({ content: 'タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
+    }
+    if (todo.completed) {
+        return interaction.reply({ content: `#${todoId} は既に完了しています。`, flags: [MessageFlags.Ephemeral] });
+    }
+
+    completeTodo(todoId, guildId);
+
+    // Handle recurrence
+    if (todo.recurrence && todo.recurrence !== 'none') {
+        const { calculateNextDue } = require('./selectHandler');
+        if (calculateNextDue) {
+            const nextDue = calculateNextDue(todo.due_date, todo.recurrence);
+            addTodo(guildId, {
+                name: todo.name,
+                priority: todo.priority,
+                due_date: nextDue,
+                assignee_id: todo.assignee_id,
+                category_id: todo.category_id,
+                recurrence: todo.recurrence,
+                created_by: todo.created_by,
+            });
+        }
+    }
+
+    // Update the message to show completion
+    await interaction.update({
+        content: `#${todoId} **${todo.name}** を完了にしました。`,
+        components: [],
+    });
+}
+
 // === Create confirmation handlers ===
 
 async function handleConfirmCreate(interaction, guildId) {
     const stateKey = `${interaction.user.id}_${guildId}`;
     const data = pendingCreations.get(stateKey);
     if (!data) {
-        return interaction.update({ content: '⚠️ セッションが期限切れです。もう一度コマンドを実行してください。', embeds: [], components: [] });
+        return interaction.update({ content: 'セッションが期限切れです。もう一度コマンドを実行してください。', embeds: [], components: [] });
     }
 
     // Create the todo
@@ -68,13 +112,15 @@ async function handleConfirmCreate(interaction, guildId) {
         category_id: data.category_id,
         recurrence: data.recurrence,
         created_by: data.created_by,
+        reminder_at: data.reminder_at,
     });
 
+    const newTodoId = result.lastInsertRowid;
     pendingCreations.delete(stateKey);
 
     // Build public announcement embed
     const todoForEmbed = {
-        id: result.lastInsertRowid,
+        id: newTodoId,
         name: data.name,
         priority: data.priority ?? 0,
         due_date: data.due_date,
@@ -82,11 +128,20 @@ async function handleConfirmCreate(interaction, guildId) {
         category_name: data.category_name,
         category_emoji: data.category_emoji,
         recurrence: data.recurrence,
+        reminder_at: data.reminder_at,
     };
     const embed = buildCreatedEmbed(todoForEmbed, data.created_by);
 
+    // Add a complete button
+    const doneButton = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`quick_done_${newTodoId}`)
+            .setLabel('完了')
+            .setStyle(ButtonStyle.Success)
+    );
+
     // Update the original message to show the created embed (public)
-    await interaction.update({ embeds: [embed], components: [] });
+    await interaction.update({ embeds: [embed], components: [doneButton] });
 
     // Also announce in the configured todo channel if different from current channel
     try {
@@ -94,7 +149,7 @@ async function handleConfirmCreate(interaction, guildId) {
         if (settings.todo_channel_id && settings.todo_channel_id !== interaction.channelId) {
             const todoChannel = await interaction.client.channels.fetch(settings.todo_channel_id).catch(() => null);
             if (todoChannel) {
-                await todoChannel.send({ embeds: [embed] });
+                await todoChannel.send({ embeds: [embed], components: [doneButton] });
             }
         }
     } catch (e) {
@@ -106,12 +161,12 @@ async function handleEditCreate(interaction, guildId) {
     const stateKey = `${interaction.user.id}_${guildId}`;
     const data = pendingCreations.get(stateKey);
     if (!data) {
-        return interaction.reply({ content: '⚠️ セッションが期限切れです。', flags: [MessageFlags.Ephemeral] });
+        return interaction.reply({ content: 'セッションが期限切れです。', flags: [MessageFlags.Ephemeral] });
     }
 
     const modal = new ModalBuilder()
         .setCustomId('modal_edit_create')
-        .setTitle('✏️ タスクを編集');
+        .setTitle('タスクを編集');
 
     const nameInput = new TextInputBuilder()
         .setCustomId('create_name')
@@ -123,17 +178,16 @@ async function handleEditCreate(interaction, guildId) {
 
     const dueInput = new TextInputBuilder()
         .setCustomId('create_due')
-        .setLabel('期限（自然言語OK / 空欄でなし）')
+        .setLabel('期限')
         .setStyle(TextInputStyle.Short)
-        .setRequired(false)
-        .setPlaceholder('例: 明日の15時, 3日後, 来週金曜');
+        .setRequired(false);
     if (data.due_date) {
-        dueInput.setValue(new Date(data.due_date).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
+        dueInput.setValue(formatDateDisplayJST(data.due_date));
     }
 
     const priorityInput = new TextInputBuilder()
         .setCustomId('create_priority')
-        .setLabel('重要度（0=低, 1=中, 2=高, 3=緊急）')
+        .setLabel('重要度 (0=低, 1=中, 2=高, 3=緊急)')
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
         .setValue(String(data.priority ?? 0))
@@ -141,24 +195,24 @@ async function handleEditCreate(interaction, guildId) {
 
     const assigneeInput = new TextInputBuilder()
         .setCustomId('create_assignee')
-        .setLabel('担当者（ユーザーIDまたは空欄）')
+        .setLabel('担当者 (ユーザーID)')
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
         .setValue(data.assignee_id || '');
 
-    const recurrenceInput = new TextInputBuilder()
-        .setCustomId('create_recurrence')
-        .setLabel('繰り返し（daily/weekly/monthly/空欄）')
+    const reminderInput = new TextInputBuilder()
+        .setCustomId('create_reminder')
+        .setLabel('リマインダー時刻')
         .setStyle(TextInputStyle.Short)
         .setRequired(false)
-        .setValue(data.recurrence || '');
+        .setValue(data.reminder_at ? formatDateDisplayJST(data.reminder_at) : '');
 
     modal.addComponents(
         new ActionRowBuilder().addComponents(nameInput),
         new ActionRowBuilder().addComponents(dueInput),
         new ActionRowBuilder().addComponents(priorityInput),
         new ActionRowBuilder().addComponents(assigneeInput),
-        new ActionRowBuilder().addComponents(recurrenceInput),
+        new ActionRowBuilder().addComponents(reminderInput),
     );
 
     await interaction.showModal(modal);
@@ -167,7 +221,7 @@ async function handleEditCreate(interaction, guildId) {
 async function handleCancelCreate(interaction) {
     const stateKey = `${interaction.user.id}_${interaction.guild.id}`;
     pendingCreations.delete(stateKey);
-    await interaction.update({ content: '❌ キャンセルしました', embeds: [], components: [] });
+    await interaction.update({ content: 'キャンセルしました', embeds: [], components: [] });
 }
 
 // === Dashboard handlers ===
@@ -177,7 +231,7 @@ async function handleAddButton(interaction, guildId) {
 
     const modal = new ModalBuilder()
         .setCustomId('modal_add_todo')
-        .setTitle('📝 タスクを追加');
+        .setTitle('タスクを追加');
 
     const nameInput = new TextInputBuilder()
         .setCustomId('todo_name')
@@ -191,10 +245,9 @@ async function handleAddButton(interaction, guildId) {
     if (settings.enabled_fields.includes('due_date')) {
         const dueInput = new TextInputBuilder()
             .setCustomId('todo_due')
-            .setLabel('期限（自然言語OK: "明日", "来週月曜"）')
+            .setLabel('期限')
             .setStyle(TextInputStyle.Short)
-            .setRequired(false)
-            .setPlaceholder('例: 明日の15時, 3日後, 来週金曜');
+            .setRequired(false);
         rows.push(new ActionRowBuilder().addComponents(dueInput));
     }
 
@@ -211,14 +264,14 @@ async function handleSelectForAction(interaction, guildId, action, completed = 0
     const options = todos.map(t => ({
         label: `#${t.id} ${t.name}`.slice(0, 100),
         value: `${t.id}`,
-        description: t.due_date ? `期限: ${new Date(t.due_date).toLocaleDateString('ja-JP')}` : undefined,
+        description: t.due_date ? `期限: ${formatDateDisplayJST(t.due_date)}` : undefined,
     }));
 
     const actionLabels = {
-        complete: '✅ 完了にするタスクを選択',
-        edit: '📝 編集するタスクを選択',
-        delete: '🗑️ 削除するタスクを選択',
-        reopen: '🔄 再開するタスクを選択',
+        complete: '完了にするタスクを選択',
+        edit: '編集するタスクを選択',
+        delete: '削除するタスクを選択',
+        reopen: '再開するタスクを選択',
     };
 
     const select = new ActionRowBuilder().addComponents(
