@@ -2,7 +2,7 @@
 const {
     ModalBuilder, TextInputBuilder, TextInputStyle,
     ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder,
-    ButtonBuilder, ButtonStyle,
+    ButtonBuilder, ButtonStyle, MessageFlags,
 } = require('discord.js');
 const { getGuildSettings, getTodos, completeTodo, reopenTodo, deleteTodo, addTodo, getTodoById } = require('../database');
 const { sendTodoList, sendCompletedList } = require('../utils/pagination');
@@ -106,7 +106,7 @@ async function handleEditCreate(interaction, guildId) {
     const stateKey = `${interaction.user.id}_${guildId}`;
     const data = pendingCreations.get(stateKey);
     if (!data) {
-        return interaction.reply({ content: '⚠️ セッションが期限切れです。', ephemeral: true });
+        return interaction.reply({ content: '⚠️ セッションが期限切れです。', flags: [MessageFlags.Ephemeral] });
     }
 
     const modal = new ModalBuilder()
@@ -205,7 +205,7 @@ async function handleAddButton(interaction, guildId) {
 async function handleSelectForAction(interaction, guildId, action, completed = 0) {
     const todos = getTodos(guildId, { completed, limit: 25 });
     if (todos.length === 0) {
-        return interaction.reply({ content: 'タスクがありません。', ephemeral: true });
+        return interaction.reply({ content: 'タスクがありません。', flags: [MessageFlags.Ephemeral] });
     }
 
     const options = todos.map(t => ({
@@ -228,7 +228,7 @@ async function handleSelectForAction(interaction, guildId, action, completed = 0
             .addOptions(options)
     );
 
-    await interaction.reply({ components: [select], ephemeral: true });
+    await interaction.reply({ components: [select], flags: [MessageFlags.Ephemeral] });
 }
 
 async function handlePageNav(interaction, guildId, direction) {

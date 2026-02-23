@@ -2,7 +2,7 @@
 const { getGuildSettings, addTodo, getTodoById, updateTodo, getCategories } = require('../database');
 const { parseDateWithLLM } = require('../llm');
 const { sendTodoList } = require('../utils/pagination');
-const { ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { userStates } = require('./buttonHandler');
 const { PRIORITY_LABELS, buildConfirmationEmbed, buildCreatedEmbed } = require('../utils/embeds');
 const { pendingCreations } = require('../utils/state');
@@ -165,7 +165,7 @@ async function handleEditCreateModal(interaction) {
     const data = pendingCreations.get(stateKey);
 
     if (!data) {
-        return interaction.reply({ content: '⚠️ セッションが期限切れです。もう一度コマンドを実行してください。', ephemeral: true });
+        return interaction.reply({ content: '⚠️ セッションが期限切れです。もう一度コマンドを実行してください。', flags: [MessageFlags.Ephemeral] });
     }
 
     const settings = getGuildSettings(guildId);
@@ -266,7 +266,7 @@ async function handleEditTodoModal(interaction) {
     const guildId = interaction.guild.id;
     const todo = getTodoById(todoId, guildId);
     if (!todo) {
-        return interaction.reply({ content: '⚠️ タスクが見つかりません。', ephemeral: true });
+        return interaction.reply({ content: '⚠️ タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
     }
 
     const newName = interaction.fields.getTextInputValue('edit_name');
@@ -275,7 +275,7 @@ async function handleEditTodoModal(interaction) {
     try {
         const dueInput = interaction.fields.getTextInputValue('edit_due');
         if (dueInput && dueInput.trim()) {
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
             const settings = getGuildSettings(guildId);
             const parsed = await parseDateWithLLM(dueInput, settings.timezone || 'Asia/Tokyo');
             if (parsed) updates.due_date = parsed;
@@ -288,7 +288,7 @@ async function handleEditTodoModal(interaction) {
 
     const content = `✅ タスク #${todoId} を更新しました: **${newName}**`;
     if (interaction.deferred) return interaction.editReply({ content });
-    return interaction.reply({ content, ephemeral: true });
+    return interaction.reply({ content, flags: [MessageFlags.Ephemeral] });
 }
 
 // === Add category modal ===
@@ -301,7 +301,7 @@ async function handleAddCategoryModal(interaction) {
 
     const result = addCategory(guildId, name, emoji);
     if (!result) {
-        return interaction.reply({ content: `⚠️ カテゴリ「${name}」は既に存在します。`, ephemeral: true });
+        return interaction.reply({ content: `⚠️ カテゴリ「${name}」は既に存在します。`, flags: [MessageFlags.Ephemeral] });
     }
 
     // Refresh settings view
@@ -312,7 +312,7 @@ async function handleAddCategoryModal(interaction) {
     const embed = buildSettingsEmbed(settings, categories);
     const components = buildSettingsComponents(settings, categories);
 
-    return interaction.reply({ content: `✅ カテゴリ「${emoji} ${name}」を追加しました`, embeds: [embed], components, ephemeral: true });
+    return interaction.reply({ content: `✅ カテゴリ「${emoji} ${name}」を追加しました`, embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
 }
 
 module.exports = { handleModal, buildAdditionalFieldComponents };

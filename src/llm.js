@@ -1,199 +1,243 @@
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'meta-llama/llama-3.3-70b-instruct:free';
-const MAX_RETRIES = 3;
+
+// Models to try in order. Free tier models get rate-limited intermittently.
+const MODELS = [
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'google/gemma-3-12b-it:free',
+    'google/gemma-3-4b-it:free',
+];
+
+// Some models (Gemma via Google AI Studio) don't support system messages
+const NO_SYSTEM_MSG_MODELS = new Set([
+    'google/gemma-3-12b-it:free',
+    'google/gemma-3-4b-it:free',
+]);
+
 const TIMEOUT_MS = 30000;
 
+/**
+ * Call OpenRouter API with multi-model fallback.
+ * Tries each model once; on 429 or 5xx, moves to the next model immediately.
+ */
 async function callOpenRouter(messages, maxTokens = 256) {
-  const apiKey = process.env.OPEN_ROUTER_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPEN_ROUTER_API_KEY environment variable is not set');
-  }
-
-  let lastError;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      // Longer backoff for free tier: 3s, 6s, 12s
-      const delayMs = 3000 * Math.pow(2, attempt - 1);
-      console.log(`[OpenRouter] Retry ${attempt}/${MAX_RETRIES} after ${delayMs}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+    const apiKey = process.env.OPEN_ROUTER_API_KEY;
+    if (!apiKey) {
+        throw new Error('OPEN_ROUTER_API_KEY is not set');
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    let lastError;
 
-    try {
-      const response = await fetch(OPENROUTER_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://github.com/discord-todo-bot',
-          'X-Title': 'Discord ToDo Bot',
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          messages,
-          max_tokens: maxTokens,
-          temperature: 0,
-          provider: {
-            allow_fallbacks: true,
-          },
-        }),
-        signal: controller.signal,
-      });
+    for (const model of MODELS) {
+        // If model doesn't support system messages, merge into user message
+        let msgs = messages;
+        if (NO_SYSTEM_MSG_MODELS.has(model) && messages.length >= 2 && messages[0].role === 'system') {
+            msgs = [
+                {
+                    role: 'user',
+                    content: messages[0].content + '\n\n' + messages.slice(1).map(m => m.content).join('\n'),
+                },
+            ];
+        }
 
-      clearTimeout(timeoutId);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-      if (response.status === 429 || response.status >= 500) {
-        lastError = new Error(`OpenRouter API returned status ${response.status}`);
-        continue;
-      }
+        try {
+            console.log(`[LLM] Trying ${model}...`);
+            const response = await fetch(OPENROUTER_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                    'HTTP-Referer': 'https://github.com/discord-todo-bot',
+                    'X-Title': 'Discord ToDo Bot',
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: msgs,
+                    max_tokens: maxTokens,
+                    temperature: 0,
+                }),
+                signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`OpenRouter API error ${response.status}: ${body}`);
-      }
+            if (response.status === 429 || response.status >= 500) {
+                console.log(`[LLM] ${model} returned ${response.status}, trying next...`);
+                lastError = new Error(`${model}: status ${response.status}`);
+                continue;
+            }
 
-      const data = await response.json();
-      const content = data?.choices?.[0]?.message?.content;
-      if (!content) {
-        throw new Error('No content in OpenRouter response');
-      }
+            if (response.status === 400) {
+                // Bad request (e.g. system msg not supported) - try next
+                const body = await response.text().catch(() => '');
+                console.log(`[LLM] ${model} returned 400, trying next...`);
+                lastError = new Error(`${model}: 400 ${body.substring(0, 100)}`);
+                continue;
+            }
 
-      return content.trim();
-    } catch (err) {
-      clearTimeout(timeoutId);
+            if (!response.ok) {
+                const body = await response.text().catch(() => '');
+                lastError = new Error(`${model}: ${response.status} ${body.substring(0, 100)}`);
+                continue;
+            }
 
-      if (err.name === 'AbortError') {
-        lastError = new Error('OpenRouter API request timed out');
-        continue;
-      }
+            const data = await response.json();
+            const content = data?.choices?.[0]?.message?.content;
+            if (!content) {
+                lastError = new Error(`${model}: empty response`);
+                continue;
+            }
 
-      if (lastError && (err.message || '').includes('status')) {
-        continue;
-      }
-
-      throw err;
+            console.log(`[LLM] ${model} responded OK`);
+            return content.trim();
+        } catch (err) {
+            clearTimeout(timeoutId);
+            if (err.name === 'AbortError') {
+                console.log(`[LLM] ${model} timed out, trying next...`);
+                lastError = new Error(`${model}: timeout`);
+                continue;
+            }
+            lastError = err;
+            continue;
+        }
     }
-  }
 
-  throw lastError;
+    throw lastError || new Error('All models failed');
 }
 
 function extractJSON(text) {
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    return JSON.parse(fenceMatch[1].trim());
-  }
-  return JSON.parse(text.trim());
+    // Try to find JSON in markdown code blocks first
+    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) {
+        return JSON.parse(fenceMatch[1].trim());
+    }
+    // Try to find a JSON object in the text
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+    }
+    return JSON.parse(text.trim());
 }
 
 function getCurrentTimeString(timezone) {
-  try {
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat('ja-JP', {
-      timeZone: timezone || 'Asia/Tokyo',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
-    const parts = formatter.formatToParts(now);
-    const get = (type) => parts.find(p => p.type === type)?.value || '';
-    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
-  } catch {
-    return new Date().toISOString().replace('Z', '');
-  }
+    try {
+        const now = new Date();
+        const formatter = new Intl.DateTimeFormat('ja-JP', {
+            timeZone: timezone || 'Asia/Tokyo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+        });
+        const parts = formatter.formatToParts(now);
+        const get = (type) => parts.find(p => p.type === type)?.value || '';
+        return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
+    } catch {
+        return new Date().toISOString().replace('Z', '');
+    }
+}
+
+function getDayOfWeek(dateStr) {
+    const days = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'];
+    const d = new Date(dateStr);
+    return days[d.getDay()] || '';
 }
 
 async function parseDateWithLLM(input, timezone) {
-  const currentTime = getCurrentTimeString(timezone);
-  const tz = timezone || 'Asia/Tokyo';
+    if (!input || !input.trim()) return null;
 
-  const messages = [
-    {
-      role: 'system',
-      content: 'You are a date parser. Given the current date/time and a Japanese natural language date expression, output ONLY an ISO 8601 date string (YYYY-MM-DDTHH:mm:ss). No other text. If time not specified, use 23:59:59.',
-    },
-    {
-      role: 'user',
-      content: `Current date/time: ${currentTime} (${tz})\nDate expression: ${input}`,
-    },
-  ];
+    const currentTime = getCurrentTimeString(timezone);
+    const tz = timezone || 'Asia/Tokyo';
+    const dow = getDayOfWeek(currentTime);
 
-  const result = await callOpenRouter(messages, 64);
-  const match = result.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
-  if (!match) {
-    throw new Error(`Failed to parse date from LLM response: ${result}`);
-  }
-  return match[1];
+    const messages = [
+        {
+            role: 'system',
+            content: 'You are a date parser. Given the current date/time and a Japanese natural language date expression, output ONLY an ISO 8601 date string (YYYY-MM-DDTHH:mm:ss). No other text. If time not specified, use 23:59:59.',
+        },
+        {
+            role: 'user',
+            content: `Current date/time: ${currentTime} (${tz}, ${dow})\nDate expression: ${input}`,
+        },
+    ];
+
+    try {
+        const result = await callOpenRouter(messages, 64);
+        const match = result.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+        if (match) return match[1];
+        console.error('[DateParser] No date found in LLM response:', result);
+        return null;
+    } catch (err) {
+        console.error('[DateParser] All models failed:', err.message);
+        return null;
+    }
 }
 
 async function parseNaturalLanguageTodo(input, guildMembers, categories, timezone) {
-  const fallback = {
-    name: input,
-    due_date: null,
-    assignee_id: null,
-    priority: null,
-    recurrence: null,
-    category_id: null,
-  };
+    const fallback = {
+        name: input,
+        due_date: null,
+        assignee_id: null,
+        priority: null,
+        recurrence: null,
+        category_id: null,
+    };
 
-  try {
-    const currentTime = getCurrentTimeString(timezone);
-    const tz = timezone || 'Asia/Tokyo';
+    try {
+        const currentTime = getCurrentTimeString(timezone);
+        const tz = timezone || 'Asia/Tokyo';
+        const dow = getDayOfWeek(currentTime);
 
-    const memberList = (guildMembers || []).map(m => `- ID: "${m.id}", Display: "${m.displayName}", Username: "${m.username}"`).join('\n');
-    const categoryList = (categories || []).map(c => `- ID: ${c.id}, Name: "${c.name}", Emoji: "${c.emoji || ''}"`).join('\n');
+        const memberList = (guildMembers || []).map(m =>
+            `- ID: "${m.id}", Display: "${m.displayName}", Username: "${m.username}"`
+        ).join('\n');
+        const categoryList = (categories || []).map(c =>
+            `- ID: ${c.id}, Name: "${c.name}"`
+        ).join('\n');
 
-    const systemPrompt = `You are a task parser for a Japanese-language Discord ToDo bot.
-Extract structured task information from the user's natural language input.
+        const systemPrompt = `You are a task parser for a Japanese-language Discord ToDo bot.
+Extract structured task info from user input.
 
-Current date/time: ${currentTime} (${tz})
+Current: ${currentTime} (${tz}, ${dow})
 
-Available Discord members:
+Members:
 ${memberList || '(none)'}
 
-Available categories:
+Categories:
 ${categoryList || '(none)'}
 
-Return ONLY a JSON object with these fields:
-- "name": string - the task name/description (content only, strip metadata like dates, assignees, priority markers)
-- "due_date": string or null - ISO 8601 format (YYYY-MM-DDTHH:mm:ss). If time not specified, use 23:59:59.
-- "assignee_id": string or null - the Discord user ID from the member list above that best matches any mentioned person
-- "priority": number or null - 0=low, 1=mid, 2=high, 3=urgent. Infer from keywords like 至急/緊急(urgent=3), 重要/高(high=2), 中/普通(mid=1), 低(low=0)
-- "recurrence": string or null - one of "daily", "weekly", "monthly" if the task repeats
-- "category_id": number or null - the category ID from the list above that best matches any category hints
+Return ONLY a JSON object:
+{"name":"task name only","due_date":"YYYY-MM-DDTHH:mm:ss or null","assignee_id":"member ID or null","priority":0-3 or null,"recurrence":"daily|weekly|monthly or null","category_id":number or null}
 
-Output ONLY valid JSON. No markdown, no explanation.`;
+Priority: 緊急/至急=3, 重要/高=2, 中=1, 低=0. Time default=23:59:59. Output ONLY JSON.`;
 
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: input },
-    ];
+        const messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: input },
+        ];
 
-    const result = await callOpenRouter(messages, 512);
-    const parsed = extractJSON(result);
+        const result = await callOpenRouter(messages, 512);
+        const parsed = extractJSON(result);
 
-    return {
-      name: typeof parsed.name === 'string' && parsed.name ? parsed.name : input,
-      due_date: typeof parsed.due_date === 'string' ? parsed.due_date : null,
-      assignee_id: typeof parsed.assignee_id === 'string' ? parsed.assignee_id : null,
-      priority: typeof parsed.priority === 'number' && parsed.priority >= 0 && parsed.priority <= 3 ? parsed.priority : null,
-      recurrence: ['daily', 'weekly', 'monthly'].includes(parsed.recurrence) ? parsed.recurrence : null,
-      category_id: typeof parsed.category_id === 'number' ? parsed.category_id : null,
-    };
-  } catch (err) {
-    console.error('parseNaturalLanguageTodo failed:', err.message);
-    return fallback;
-  }
+        return {
+            name: typeof parsed.name === 'string' && parsed.name ? parsed.name : input,
+            due_date: typeof parsed.due_date === 'string' ? parsed.due_date : null,
+            assignee_id: typeof parsed.assignee_id === 'string' ? parsed.assignee_id : null,
+            priority: typeof parsed.priority === 'number' && parsed.priority >= 0 && parsed.priority <= 3 ? parsed.priority : null,
+            recurrence: ['daily', 'weekly', 'monthly'].includes(parsed.recurrence) ? parsed.recurrence : null,
+            category_id: typeof parsed.category_id === 'number' ? parsed.category_id : null,
+        };
+    } catch (err) {
+        console.error('[NLParser] All models failed:', err.message);
+        return fallback;
+    }
 }
 
 module.exports = {
-  parseDateWithLLM,
-  parseNaturalLanguageTodo,
+    parseDateWithLLM,
+    parseNaturalLanguageTodo,
 };

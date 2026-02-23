@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, MessageFlags } = require('discord.js');
 const { getGuildSettings, updateGuildSettings, getCategories, addCategory, deleteCategory } = require('../database');
 const { buildSettingsEmbed } = require('../utils/embeds');
 const { ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
@@ -14,7 +14,7 @@ async function execute(interaction) {
     const embed = buildSettingsEmbed(settings, categories);
 
     const components = buildSettingsComponents(settings, categories);
-    await interaction.reply({ embeds: [embed], components, ephemeral: true });
+    await interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
 }
 
 function buildSettingsComponents(settings, categories) {

@@ -1,7 +1,7 @@
 const {
     ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
     StringSelectMenuBuilder, UserSelectMenuBuilder,
-    ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType,
+    ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, MessageFlags,
 } = require('discord.js');
 const {
     getGuildSettings, updateGuildSettings, completeTodo, reopenTodo,
@@ -117,7 +117,7 @@ async function handleActionEdit(interaction) {
     const todoId = parseInt(interaction.values[0]);
     const todo = getTodoById(todoId, guildId);
     if (!todo) {
-        return interaction.reply({ content: '⚠️ タスクが見つかりません。', ephemeral: true });
+        return interaction.reply({ content: '⚠️ タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
     }
 
     const settings = getGuildSettings(guildId);
@@ -155,7 +155,7 @@ async function handleActionDelete(interaction) {
     const todoId = parseInt(interaction.values[0]);
     const todo = getTodoById(todoId, guildId);
     if (!todo) {
-        return interaction.reply({ content: '⚠️ タスクが見つかりません。', ephemeral: true });
+        return interaction.reply({ content: '⚠️ タスクが見つかりません。', flags: [MessageFlags.Ephemeral] });
     }
 
     const row = new ActionRowBuilder().addComponents(
@@ -166,7 +166,7 @@ async function handleActionDelete(interaction) {
     await interaction.reply({
         content: `🗑️ **${todo.name}** (ID: #${todoId}) を削除しますか？`,
         components: [row],
-        ephemeral: true,
+        flags: [MessageFlags.Ephemeral],
     });
 }
 

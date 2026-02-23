@@ -14,7 +14,7 @@ const { handleNaturalLanguageCreate } = require('./commands/create');
 const {
     ActionRowBuilder, ChannelSelectMenuBuilder, ChannelType,
     ModalBuilder, TextInputBuilder, TextInputStyle,
-    UserSelectMenuBuilder, ButtonBuilder, ButtonStyle,
+    UserSelectMenuBuilder, ButtonBuilder, ButtonStyle, MessageFlags,
 } = require('discord.js');
 
 // Ensure data directory exists
@@ -145,9 +145,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const content = '⚠️ エラーが発生しました。もう一度お試しください。';
         try {
             if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content, ephemeral: true });
+                await interaction.followUp({ content, flags: [MessageFlags.Ephemeral] });
             } else {
-                await interaction.reply({ content, ephemeral: true });
+                await interaction.reply({ content, flags: [MessageFlags.Ephemeral] });
             }
         } catch {
             // Already handled
@@ -240,7 +240,7 @@ async function handleShowAssigneeSelect(interaction) {
             .setCustomId('add_assignee')
             .setPlaceholder('👤 担当者を選択')
     );
-    await interaction.reply({ components: [select], ephemeral: true });
+    await interaction.reply({ components: [select], flags: [MessageFlags.Ephemeral] });
 }
 
 async function handleShowChannelSelect(interaction, type) {
@@ -253,7 +253,7 @@ async function handleShowChannelSelect(interaction, type) {
             .setPlaceholder(label)
             .addChannelTypes(ChannelType.GuildText)
     );
-    await interaction.reply({ components: [select], ephemeral: true });
+    await interaction.reply({ components: [select], flags: [MessageFlags.Ephemeral] });
 }
 
 async function handleShowCategoryModal(interaction) {

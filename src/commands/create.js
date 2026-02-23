@@ -75,7 +75,12 @@ async function handleNaturalLanguageCreate(interaction, text) {
 
     // Build confirmation embed
     const embed = buildConfirmationEmbed(todoData, interaction.user.id);
-    embed.setAuthor({ name: '🤖 AI解析結果' });
+    const aiWorked = parsed.due_date || parsed.assignee_id || parsed.priority !== null || parsed.name !== text;
+    if (aiWorked) {
+        embed.setAuthor({ name: '🤖 AI解析結果' });
+    } else {
+        embed.setAuthor({ name: '⚠️ AI解析が利用できませんでした。編集してください' });
+    }
 
     const buttons = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('confirm_create').setLabel('作成する').setEmoji('✅').setStyle(ButtonStyle.Success),
