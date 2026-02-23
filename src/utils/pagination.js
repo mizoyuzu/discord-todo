@@ -9,19 +9,19 @@ function buildTodoListComponents(todos, page, totalPages, guildId, enabledFields
 
     // Main action buttons
     const buttonRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('todo_add').setLabel('追加').setEmoji('➕').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('todo_complete').setLabel('完了').setEmoji('✅').setStyle(ButtonStyle.Primary).setDisabled(todos.length === 0),
-        new ButtonBuilder().setCustomId('todo_edit').setLabel('編集').setEmoji('📝').setStyle(ButtonStyle.Secondary).setDisabled(todos.length === 0),
-        new ButtonBuilder().setCustomId('todo_delete').setLabel('削除').setEmoji('🗑️').setStyle(ButtonStyle.Danger).setDisabled(todos.length === 0),
+        new ButtonBuilder().setCustomId('todo_add').setLabel('追加').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('todo_complete').setLabel('完了').setStyle(ButtonStyle.Primary).setDisabled(todos.length === 0),
+        new ButtonBuilder().setCustomId('todo_edit').setLabel('編集').setStyle(ButtonStyle.Secondary).setDisabled(todos.length === 0),
+        new ButtonBuilder().setCustomId('todo_delete').setLabel('削除').setStyle(ButtonStyle.Danger).setDisabled(todos.length === 0),
     );
     rows.push(buttonRow);
 
     // Pagination + completed view
     const navRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('todo_prev').setLabel('◀').setStyle(ButtonStyle.Secondary).setDisabled(page <= 1),
+        new ButtonBuilder().setCustomId('todo_prev').setLabel('前').setStyle(ButtonStyle.Secondary).setDisabled(page <= 1),
         new ButtonBuilder().setCustomId('todo_page_info').setLabel(`${page}/${totalPages}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
-        new ButtonBuilder().setCustomId('todo_next').setLabel('▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages),
-        new ButtonBuilder().setCustomId('todo_completed').setLabel('完了済み').setEmoji('📦').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('todo_next').setLabel('次').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages),
+        new ButtonBuilder().setCustomId('todo_completed').setLabel('完了済み').setStyle(ButtonStyle.Secondary),
     );
     rows.push(navRow);
 
@@ -35,13 +35,13 @@ function buildFilterComponents(guildId, enabledFields) {
     // Filter select menu (only if relevant fields are enabled)
     if (enabledFields.includes('category') && categories.length > 0) {
         const catOptions = [
-            { label: 'すべて', value: 'all', emoji: '📋' },
-            ...categories.map(c => ({ label: c.name, value: `cat_${c.id}`, emoji: c.emoji || '📁' })),
+            { label: 'すべて', value: 'all' },
+            ...categories.map(c => ({ label: c.name, value: `cat_${c.id}` })),
         ];
         const catSelect = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId('todo_filter_category')
-                .setPlaceholder('📁 カテゴリで絞り込み')
+                .setPlaceholder('カテゴリで絞り込み')
                 .addOptions(catOptions.slice(0, 25))
         );
         rows.push(catSelect);
@@ -98,16 +98,16 @@ async function sendCompletedList(interaction, guildId, page = 1) {
     });
 
     const embed = buildTodoListEmbed(todos, interaction.guild?.name || 'サーバー', page, totalPages, totalCount);
-    embed.setTitle(`📦 完了済みタスク`);
+    embed.setTitle('完了済みタスク');
     embed.setColor(0x95a5a6);
 
     const rows = [];
     const buttonRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('todo_reopen').setLabel('再開').setEmoji('🔄').setStyle(ButtonStyle.Primary).setDisabled(todos.length === 0),
-        new ButtonBuilder().setCustomId('todo_back').setLabel('戻る').setEmoji('◀').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('comp_prev').setLabel('◀').setStyle(ButtonStyle.Secondary).setDisabled(page <= 1),
+        new ButtonBuilder().setCustomId('todo_reopen').setLabel('再開').setStyle(ButtonStyle.Primary).setDisabled(todos.length === 0),
+        new ButtonBuilder().setCustomId('todo_back').setLabel('戻る').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('comp_prev').setLabel('前').setStyle(ButtonStyle.Secondary).setDisabled(page <= 1),
         new ButtonBuilder().setCustomId('comp_page_info').setLabel(`${page}/${totalPages}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
-        new ButtonBuilder().setCustomId('comp_next').setLabel('▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages),
+        new ButtonBuilder().setCustomId('comp_next').setLabel('次').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages),
     );
     rows.push(buttonRow);
 
